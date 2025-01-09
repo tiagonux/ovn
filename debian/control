@@ -11,7 +11,6 @@ Build-Depends:
  automake,
  bash (>= 5.2.15~),
  bzip2,
- debhelper-compat (= 13),
  dh-python,
  graphviz,
  libcap-ng-dev,

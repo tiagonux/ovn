@@ -18,6 +18,7 @@ override_dh_auto_configure:
 	test -f $(CURDIR)/ovs/configure || \
 		rm -rf $(CURDIR)/ovs && \
 		cp -R /usr/src/openvswitch $(CURDIR)/ovs
+	cd ovs && tar -xzf openvswitch.tar.gz --strip-components=1
 	cd ovs && ./configure --enable-ssl LIBS=-ljemalloc --localstatedir=/var --sysconfdir=/etc --prefix=/usr && make $(PARALLEL)
 	# Configure OVN to allow building OVN VIF
 	./boot.sh && ./configure \
