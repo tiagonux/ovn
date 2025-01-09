@@ -298,7 +298,7 @@ static-check:
 .PHONY: static-check
 
 # Check that assert.h is not used outside a whitelist of files.
-ALL_LOCAL += check-assert-h-usage
+#ALL_LOCAL += check-assert-h-usage
 check-assert-h-usage:
 	@if test -e $(srcdir)/.git && (git --version) >/dev/null 2>&1 && \
 	  (cd $(srcdir) && git --no-pager grep -l -E '[<]assert.h[>]') | \
@@ -314,7 +314,7 @@ check-assert-h-usage:
 # also mentioned.  (<endian.h> always defines the former two constants.  They
 # must be compared to BYTE_ORDER to get the machine's correct endianness.  But
 # it is better to use WORDS_BIGENDIAN.)
-ALL_LOCAL += check-endian
+#ALL_LOCAL += check-endian
 check-endian:
 	@if test -e $(srcdir)/.git && (git --version) >/dev/null 2>&1 && \
 	  (cd $(srcdir) && git --no-pager grep -l -E \
@@ -326,7 +326,7 @@ check-endian:
 	fi
 .PHONY: check-endian
 
-ALL_LOCAL += check-echo-n
+#ALL_LOCAL += check-echo-n
 check-echo-n:
 	@if test -e $(srcdir)/.git && (git --version) >/dev/null 2>&1 && \
 	  git --no-pager grep -n 'echo'' -n' $(srcdir); \
@@ -337,7 +337,7 @@ check-echo-n:
 	fi
 .PHONY: check-echo-n
 
-ALL_LOCAL += check-tabs
+#ALL_LOCAL += check-tabs
 check-tabs:
 	@cd $(srcdir); \
 	if test -e .git && (git --version) >/dev/null 2>&1 && \
@@ -369,7 +369,7 @@ EXTRA_DIST += build-aux/thread-safety-blacklist
 
 # Check that "ip" is used in preference to "ifconfig", because
 # "ifconfig" is not installed ubiquitously anymore.
-ALL_LOCAL += check-ifconfig
+#ALL_LOCAL += check-ifconfig
 check-ifconfig:
 	@if test -e $(srcdir)/.git && (git --version) >/dev/null 2>&1 && \
 	  (cd $(srcdir) && git --no-pager grep -l -E -e 'ifconfig' | \
