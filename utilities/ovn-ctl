@@ -886,7 +886,7 @@ set_defaults () {
     OVN_CONTROLLER_LOG="-vconsole:emer -vsyslog:err -vfile:info"
     OVN_NORTHD_LOG="-vconsole:emer -vsyslog:err -vfile:info"
     OVN_NORTHD_LOGFILE=""
-    OVN_NORTHD_N_THREADS=1
+    OVN_NORTHD_N_THREADS=8
     OVN_IC_LOG="-vconsole:emer -vsyslog:err -vfile:info"
     OVN_IC_LOGFILE=""
     OVN_NB_LOG="-vconsole:off -vfile:info"

@@ -1,0 +1,37 @@
+OVN VIF v24.03.1 - 12 Mar 2024
+------------------------------
+  - Bugfixes.
+
+OVN VIF v24.03.0 - 04 Mar 2024
+------------------------------
+
+OVN VIF v23.09.0 - 18 Sep 2023
+------------------------------
+  - Log reason for failure to initialize udev monitoring and lower the
+    severity of logging on failure to set udev recv buffer size.
+
+OVN VIF v23.03.0 - 06 Mar 2023
+------------------------------
+
+OVN VIF v22.12.0 - 19 Dec 2022
+------------------------------
+
+OVN VIF v22.09.0 - 19 Sep 2022
+------------------------------
+
+OVN VIF v22.06.0 - 06 Jul 2022
+------------------------------
+
+OVN VIF v22.03.0 - 11 Mar 2022
+------------------------------
+  - Introduced runtime update of lookup tables.  Before this change lookup
+    tables were populated on initial startup of the ovn-controller only, and as
+    such any representors created after ovn-controller startup would not be
+    available until restart of the ovn-controller.  Systems using systemd and
+    udev should install libudev header- and library- files prior to compiling
+    ovn-vif to enable handling of systemd predictable network interface name
+    functionality.
+
+OVN VIF v21.12.0 - 23 Dec 2021
+------------------------------
+  - Initial release.

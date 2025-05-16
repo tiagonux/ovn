@@ -1,20 +1,61 @@
-ovn (25.03.90-1) unstable; urgency=low
+ovn (99:24.03.5-jammy.mgl.1) mgl; urgency=medium
 
+   [ Lucas Vargas Dias]
+   * Removing conditional test to validade configure file exist in ovs, adapting to
+     the use of the pipeline.
+
+   * Fix ovn-ic.service systemd mgmt
+    - https://bugs.launchpad.net/ubuntu/+source/ovn/+bug/2063260
+
+   * Backports from upstream main:
+   * northd: Fix logical router load-balancer nat rules when using DGP.
+    - https://github.com/ovn-org/ovn/commit/264c8310c399674ca3cb2db95211bb6a81f25799
+   * tests: Fix multiple ovn-ic race conditions.
+    - https://github.com/ovn-org/ovn/commit/d81738a60141f742a9c3532d54dd60e1e0e92a77
+   * ovn-ic: Add support for route tag.
+    - https://github.com/ovn-org/ovn/commit/b2b2b5a51ccdfde839eef40add5d8a70bd6c82c7
+
+   * Backports from upstream branch-24.09:
+   * tests: Add macro to strip table numbers from lflows.
+    - https://github.com/ovn-org/ovn/commit/6ee97092b061a9a0ccc82468b62cf622927b81ba
+   * northd: Commit from-lport ACL label (and state) when LBs are used.
+    - https://github.com/ovn-org/ovn/commit/a0beaab8c2b869663ae2b424fa9b2b52e2598483
+   * Inclusive language substitutions: "blacklist/whitelist".
+    - https://github.com/ovn-org/ovn/commit/6d32d2524392c617d850f7acb4d8bd9adeff4e8a
+   * ovn-ic: Fix global blacklist filter for IPv6 addresses.
+    - https://github.com/ovn-org/ovn/commit/78750699ab195a1b2c48fbab8546ed0651b05de4
+
+ -- Lucas Vargas Dias <lucas.vdias@luizalabs.com>  Fri, 24 Jan 2025 18:05:28 -0300
+
+ovn (24.03.5-1) unstable; urgency=low
+   [ OVN team ]
    * New upstream version
 
- -- OVN team <dev@openvswitch.org>  Fri, 14 Feb 2025 10:01:17 -0500
+ -- OVN team <dev@openvswitch.org>  Tue, 21 Jan 2025 18:05:28 -0500
 
-ovn (25.03.0-1) unstable; urgency=low
-
+ovn (24.03.4-1) unstable; urgency=low
+   [ OVN team ]
    * New upstream version
 
- -- OVN team <dev@openvswitch.org>  Fri, 07 Mar 2025 14:37:35 -0500
+ -- OVN team <dev@openvswitch.org>  Fri, 18 Oct 2024 13:05:36 -0400
 
-ovn (24.09.0-1) unstable; urgency=low
-
+ovn (24.03.3-1) unstable; urgency=low
+   [ OVN team ]
    * New upstream version
 
- -- OVN team <dev@openvswitch.org>  Fri, 13 Sep 2024 19:09:31 -0400
+ -- OVN team <dev@openvswitch.org>  Fri, 16 Aug 2024 13:51:03 -0400
+
+ovn (24.03.2-1) unstable; urgency=low
+   [ OVN team ]
+   * New upstream version
+
+ -- OVN team <dev@openvswitch.org>  Thu, 09 May 2024 15:10:30 -0400
+
+ovn (24.03.1-1) unstable; urgency=low
+   [ OVN team ]
+   * New upstream version
+
+ -- OVN team <dev@openvswitch.org>  Tue, 12 Mar 2024 08:34:38 -0400
 
 ovn (24.03.0-1) unstable; urgency=low
 
