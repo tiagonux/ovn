@@ -1,3 +1,7 @@
+ovn (25.03.1-jammy.mgl.1) mgl; urgency=medium
+   [ Tiago Pires ]
+   * Fixes for Ubuntu Jammy
+
 ovn (25.03.1-1) unstable; urgency=low
    [ OVN team ]
    * New upstream version
