@@ -50,6 +50,7 @@
 #include "openvswitch/vlog.h"
 #include "bitmap.h"
 #include "vec.h"
+#include "uuidset.h"
 
 VLOG_DEFINE_THIS_MODULE(nbctl);
 
@@ -483,6 +484,7 @@ Port group commands:\n\
   pg-add PG [PORTS]           Create port group PG with optional PORTS\n\
   pg-set-ports PG PORTS       Set PORTS on port group PG\n\
   pg-del PG                   Delete port group PG\n\
+  pg-get-ports PG             Get PORTS on port group PG\n\
 HA chassis group commands:\n\
   ha-chassis-group-add GRP    Create an HA chassis group GRP\n\
   ha-chassis-group-del GRP    Delete the HA chassis group GRP\n\
@@ -2222,30 +2224,10 @@ acl_cmd_get_pg_or_ls(struct ctl_context *ctx,
 }
 
 static void
-nbctl_acl_list(struct ctl_context *ctx)
+nbctl_acl_print(struct ctl_context *ctx, const struct nbrec_acl **acls,
+                size_t n_acls, const char *pg_name)
 {
-    const struct nbrec_logical_switch *ls = NULL;
-    const struct nbrec_port_group *pg = NULL;
-    const struct nbrec_acl **acls;
-    size_t i;
-
-    char *error = acl_cmd_get_pg_or_ls(ctx, &ls, &pg);
-    if (error) {
-        ctx->error = error;
-        return;
-    }
-
-    size_t n_acls = pg ? pg->n_acls : ls->n_acls;
-    struct nbrec_acl **nb_acls = pg ? pg->acls : ls->acls;
-
-    acls = xmalloc(sizeof *acls * n_acls);
-    for (i = 0; i < n_acls; i++) {
-        acls[i] = nb_acls[i];
-    }
-
-    qsort(acls, n_acls, sizeof *acls, acl_cmp);
-
-    for (i = 0; i < n_acls; i++) {
+    for (size_t i = 0; i < n_acls; i++) {
         const struct nbrec_acl *acl = acls[i];
         ds_put_format(&ctx->output, "%10s %5"PRId64" (%s) %s",
                       acl->direction, acl->priority, acl->match,
@@ -2270,10 +2252,70 @@ nbctl_acl_list(struct ctl_context *ctx)
         if (smap_get_bool(&acl->options, "apply-after-lb", false)) {
             ds_put_cstr(&ctx->output, " [after-lb]");
         }
+        if (pg_name) {
+            ds_put_format(&ctx->output, " [%s]", pg_name);
+        }
         ds_put_cstr(&ctx->output, "\n");
     }
+}
 
+static void
+nbctl_acl_list(struct ctl_context *ctx)
+{
+    const struct nbrec_logical_switch *ls = NULL;
+    const struct nbrec_port_group *pg = NULL;
+
+    char *error = acl_cmd_get_pg_or_ls(ctx, &ls, &pg);
+    if (error) {
+        ctx->error = error;
+        return;
+    }
+
+    size_t n_acls = pg ? pg->n_acls : ls->n_acls;
+    struct nbrec_acl **nb_acls = pg ? pg->acls : ls->acls;
+    const struct nbrec_acl **acls = xmalloc(sizeof *acls * n_acls);
+    for (size_t i = 0; i < n_acls; i++) {
+        acls[i] = nb_acls[i];
+    }
+
+    qsort(acls, n_acls, sizeof *acls, acl_cmp);
+    nbctl_acl_print(ctx, acls, n_acls, NULL);
     free(acls);
+
+    if (shash_find(&ctx->options, "--all") && ls) {
+        struct uuidset ports = UUIDSET_INITIALIZER(&ports);
+        for (size_t i = 0; i < ls->n_ports; i++) {
+            uuidset_insert(&ports, &ls->ports[i]->header_.uuid);
+        }
+
+        struct shash pg_map = SHASH_INITIALIZER(&pg_map);
+        const struct nbrec_port_group *iter;
+        NBREC_PORT_GROUP_FOR_EACH (iter, ctx->idl) {
+            for (size_t i = 0; i < iter->n_ports; i++) {
+                if (uuidset_find(&ports, &iter->ports[i]->header_.uuid)) {
+                    shash_add(&pg_map, iter->name, iter);
+                    break;
+                }
+            }
+        }
+
+        const struct shash_node **pg_nodes = shash_sort(&pg_map);
+        for (size_t i = 0; i < shash_count(&pg_map); i++) {
+            iter = pg_nodes[i]->data;
+            acls = xmalloc(sizeof *acls * iter->n_acls);
+            for (size_t j = 0; j < iter->n_acls; j++) {
+                acls[j] = iter->acls[j];
+            }
+
+            qsort(acls, iter->n_acls, sizeof *acls, acl_cmp);
+            nbctl_acl_print(ctx, acls, iter->n_acls, iter->name);
+            free(acls);
+        }
+
+        uuidset_destroy(&ports);
+        shash_destroy(&pg_map);
+        free(pg_nodes);
+    }
 }
 
 static int
@@ -2346,9 +2388,12 @@ nbctl_pre_acl(struct ctl_context *ctx)
 {
     ovsdb_idl_add_column(ctx->idl, &nbrec_port_group_col_name);
     ovsdb_idl_add_column(ctx->idl, &nbrec_port_group_col_acls);
+    ovsdb_idl_add_column(ctx->idl, &nbrec_port_group_col_ports);
 
+    ovsdb_idl_add_column(ctx->idl, &nbrec_logical_switch_port_col_name);
     ovsdb_idl_add_column(ctx->idl, &nbrec_logical_switch_col_name);
     ovsdb_idl_add_column(ctx->idl, &nbrec_logical_switch_col_acls);
+    ovsdb_idl_add_column(ctx->idl, &nbrec_logical_switch_col_ports);
 
     ovsdb_idl_add_column(ctx->idl, &nbrec_acl_col_direction);
     ovsdb_idl_add_column(ctx->idl, &nbrec_acl_col_priority);
@@ -5784,24 +5829,25 @@ lr_get_name(const struct nbrec_logical_router *lr, char uuid_s[UUID_LEN + 1],
 }
 
 static char * OVS_WARN_UNUSED_RESULT
-gc_by_name_or_uuid(struct ctl_context *ctx, const char *id, bool must_exist,
-                   const struct nbrec_gateway_chassis **gc_p)
+gc_by_chassis_name_or_uuid(struct ctl_context *ctx,
+                           const char *id, bool must_exist,
+                           const struct nbrec_gateway_chassis **gc_p,
+                           const struct nbrec_logical_router_port *lrp)
 {
     const struct nbrec_gateway_chassis *gc = NULL;
     *gc_p = NULL;
+
+    for (size_t i = 0; i < lrp->n_gateway_chassis; i++) {
+        if (!strcmp(lrp->gateway_chassis[i]->chassis_name, id)) {
+            *gc_p = lrp->gateway_chassis[i];
+            return NULL;
+        }
+    }
 
     struct uuid gc_uuid;
     bool is_uuid = uuid_from_string(&gc_uuid, id);
     if (is_uuid) {
         gc = nbrec_gateway_chassis_get_for_uuid(ctx->idl, &gc_uuid);
-    }
-
-    if (!gc) {
-        NBREC_GATEWAY_CHASSIS_FOR_EACH (gc, ctx->idl) {
-            if (!strcmp(gc->name, id)) {
-                break;
-            }
-        }
     }
 
     if (!gc && must_exist) {
@@ -5822,6 +5868,7 @@ nbctl_pre_lrp_set_gateway_chassis(struct ctl_context *ctx)
 
     ovsdb_idl_add_column(ctx->idl, &nbrec_gateway_chassis_col_name);
     ovsdb_idl_add_column(ctx->idl, &nbrec_gateway_chassis_col_priority);
+    ovsdb_idl_add_column(ctx->idl, &nbrec_gateway_chassis_col_chassis_name);
 }
 
 static void
@@ -5852,7 +5899,7 @@ nbctl_lrp_set_gateway_chassis(struct ctl_context *ctx)
 
     gc_name = xasprintf("%s-%s", lrp_name, chassis_name);
     const struct nbrec_gateway_chassis *gc;
-    error = gc_by_name_or_uuid(ctx, gc_name, false, &gc);
+    error = gc_by_chassis_name_or_uuid(ctx, chassis_name, false, &gc, lrp);
     if (error) {
         ctx->error = error;
         free(gc_name);
@@ -7445,7 +7492,7 @@ cmd_pg_add(struct ctl_context *ctx)
 }
 
 static void
-cmd_pre_pg_set_ports(struct ctl_context *ctx)
+cmd_pre_pg_set_get_ports(struct ctl_context *ctx)
 {
     ovsdb_idl_add_column(ctx->idl, &nbrec_logical_switch_port_col_name);
 
@@ -7487,6 +7534,45 @@ cmd_pg_del(struct ctl_context *ctx)
     }
 
     nbrec_port_group_delete(pg);
+}
+
+static int
+port_name_cmp(const void *s1_, const void *s2_)
+{
+    const char *s1 = *(char **) s1_;
+    const char *s2 = *(char **) s2_;
+    return strcmp(s1, s2);
+}
+
+static void
+cmd_pg_get_ports(struct ctl_context *ctx)
+{
+    const struct nbrec_port_group *pg;
+
+    char *error = pg_by_name_or_uuid(ctx, ctx->argv[1], true, &pg);
+    if (error) {
+        ctx->error = error;
+        return;
+    }
+
+    if (!pg->n_ports) {
+        return;
+    }
+
+    char **port_names = xmalloc(sizeof *port_names * pg->n_ports);
+    for (size_t i = 0; i < pg->n_ports; i++) {
+        port_names[i] = pg->ports[i]->name;
+    }
+
+    qsort(port_names, pg->n_ports, sizeof *port_names, port_name_cmp);
+
+    ds_put_format(&ctx->output, "%s", port_names[0]);
+    for (size_t i = 1; i < pg->n_ports; i++) {
+        ds_put_format(&ctx->output, " %s", port_names[i]);
+    }
+    ds_put_format(&ctx->output, "\n");
+
+    free(port_names);
 }
 
 static const struct nbrec_ha_chassis_group*
@@ -8186,8 +8272,8 @@ static const struct ctl_command_syntax nbctl_commands[] = {
       "--apply-after-lb,--tier=,--sample-new=,--sample-est=", RW },
     { "acl-del", 1, 4, "{SWITCH | PORTGROUP} [DIRECTION [PRIORITY MATCH]]",
       nbctl_pre_acl, nbctl_acl_del, NULL, "--type=,--tier=", RW },
-    { "acl-list", 1, 1, "{SWITCH | PORTGROUP}",
-      nbctl_pre_acl_list, nbctl_acl_list, NULL, "--type=", RO },
+    { "acl-list", 1, 2, "{SWITCH | PORTGROUP}",
+      nbctl_pre_acl_list, nbctl_acl_list, NULL, "--all,--type=", RO },
 
     /* qos commands. */
     { "qos-add", 5, 7,
@@ -8417,9 +8503,11 @@ static const struct ctl_command_syntax nbctl_commands[] = {
 
     /* Port Group Commands */
     {"pg-add", 1, INT_MAX, "", cmd_pre_pg_add, cmd_pg_add, NULL, "", RW },
-    {"pg-set-ports", 2, INT_MAX, "", cmd_pre_pg_set_ports, cmd_pg_set_ports,
-     NULL, "", RW },
+    {"pg-set-ports", 2, INT_MAX, "", cmd_pre_pg_set_get_ports,
+     cmd_pg_set_ports, NULL, "", RW },
     {"pg-del", 1, 1, "", cmd_pre_pg_del, cmd_pg_del, NULL, "", RW },
+    {"pg-get-ports", 1, 1, "PORT_GROUP", cmd_pre_pg_set_get_ports,
+     cmd_pg_get_ports, NULL, "", RO },
 
     /* HA chassis group commands. */
     {"ha-chassis-group-add", 1, 1, "[CHASSIS GROUP]",

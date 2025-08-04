@@ -55,16 +55,13 @@ enum ovn_controller_event {
 
 #define MFF_N_LOG_REGS 10
 
-#define MFF_LOG_LB_AFF_MATCH_IP4_ADDR       MFF_REG4
-#define MFF_LOG_LB_AFF_MATCH_IP6_ADDR       MFF_XXREG1
-#define MFF_LOG_LB_AFF_MATCH_PORT           MFF_REG2
+#define MFF_LOG_LB_AFF_MATCH_IP4_ADDR MFF_REG4
+#define MFF_LOG_LB_AFF_MATCH_IP6_ADDR MFF_XXREG1
+#define MFF_LOG_LB_AFF_MATCH_PORT     MFF_REG2
 
-#define MFF_LOG_CT_ORIG_NW_DST_ADDR         MFF_REG1   /* REG_ORIG_DIP_IPV4 */
-#define MFF_LOG_CT_ORIG_IP6_DST_ADDR        MFF_XXREG1 /* REG_ORIG_DIP_IPV6 */
-#define MFF_LOG_CT_ORIG_TP_DST_PORT         MFF_REG2   /* REG_ORIG_TP_DPORT
-                                                        * (bits 0..15). */
-#define MFF_LOG_CT_SAVED_STATE              MFF_REG4   /* REG_CT_STATE
-                                                        * (bits 0..8). */
+#define MFF_LOG_RESULT_REG            MFF_XXREG1
+
+#define MFF_LOG_CT_SAVED_STATE        MFF_REG4
 
 /* Logical registers that are needed for backwards
  * compatibility with older northd versions.
@@ -103,6 +100,7 @@ enum mff_log_flags_bits {
     MLF_FROM_CTRL_BIT = 19,
     MLF_UNSNAT_NEW_BIT = 20,
     MLF_UNSNAT_NOT_TRACKED_BIT = 21,
+    MLF_IGMP_IGMP_SNOOP_INJECT_BIT = 22,
     MLF_NETWORK_ID_START_BIT = 28,
     MLF_NETWORK_ID_END_BIT = 31,
 };
@@ -168,6 +166,9 @@ enum mff_log_flags {
 
     /* Indicate that the packet didn't go through unSNAT. */
     MLF_UNSNAT_NOT_TRACKED = (1 << MLF_UNSNAT_NOT_TRACKED_BIT),
+
+    /* Indicate that this is an IGMP packet reinjected by ovn-controller. */
+    MLF_IGMP_IGMP_SNOOP = (1 << MLF_IGMP_IGMP_SNOOP_INJECT_BIT),
 
     /* Assign network ID to packet to choose correct network for snat when
      * lb_force_snat_ip=router_ip. */

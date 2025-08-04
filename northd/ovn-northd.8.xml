@@ -653,6 +653,12 @@
       </li>
 
       <li>
+         A priority-105 added enabled when enable-stateless-acl-with-lb and
+         send all packet directed to VIP that don't match the above flows to
+         connection tracker.
+      </li>
+
+      <li>
          A priority-100 flow sends the packets to connection tracker based
          on a hint provided by the previous tables
          (with a match for <code>reg0[0] == 1</code>) by using the
@@ -1027,7 +1033,28 @@
       </li>
     </ul>
 
-    <h3>Ingress Table 13: Load balancing affinity check</h3>
+    <h3>Ingress Table 13: Connection Tracking Field Extraction</h3>
+
+    <p>
+      This table extracts connection tracking fields for new connections
+      to be used by subsequent load balancing stages.
+    </p>
+
+    <ul>
+      <li>
+        A priority-100 flow matches <code>ct.new &amp;&amp; ip</code> and
+        extracts connection tracking protocol and destination port information
+        into registers <code>reg1[16..23]</code> (protocol) and
+        <code>reg1[0..15]</code> (destination port) using the actions
+        <code>reg1[16..23] = ct_proto(); reg1[0..15] = ct_tp_dst(); next;</code>.
+      </li>
+
+      <li>
+        A priority-0 flow matches all packets and advances to the next table.
+      </li>
+    </ul>
+
+    <h3>Ingress Table 14: Load balancing affinity check</h3>
 
     <p>
       Load balancing affinity check table contains the following
@@ -1042,11 +1069,12 @@
         <var>PORT</var> of protocol <var>P</var> and IP address <var>VIP</var>,
         a priority-100 flow is added. For IPv4 <var>VIPs</var>, the flow
         matches <code>ct.new &amp;&amp; ip &amp;&amp; ip4.dst == <var>VIP</var>
-        &amp;&amp; <var>P</var>.dst == <var>PORT</var></code>. For IPv6
+        &amp;&amp; reg1[16..23] == <var>PROTO_NUM</var> &amp;&amp;
+        reg1[0..15] == <var>PORT</var></code>. For IPv6
         <var>VIPs</var>, the flow matches <code>ct.new &amp;&amp; ip &amp;&amp;
-        ip6.dst == <var>VIP</var>&amp;&amp; <var>P</var> &amp;&amp;
-        <var>P</var>.dst == <var> PORT</var></code>. The flow's action is
-        <code>reg9[6] = chk_lb_aff(); next;</code>.
+        ip6.dst == <var>VIP</var> &amp;&amp; reg1[16..23] ==
+        <var>PROTO_NUM</var> &amp;&amp; reg1[0..15] == <var>PORT</var></code>.
+        The flow's action is <code>reg9[6] = chk_lb_aff(); next;</code>.
       </li>
 
       <li>
@@ -1055,7 +1083,7 @@
       </li>
     </ul>
 
-    <h3>Ingress Table 14: LB</h3>
+    <h3>Ingress Table 15: LB</h3>
 
     <ul>
       <li>
@@ -1083,11 +1111,13 @@
         <var>PORT</var> of protocol <var>P</var> and IP address
         <var>VIP</var>, a priority-120 flow is added.  For IPv4 <var>VIPs
         </var>, the flow matches <code>ct.new &amp;&amp; ip &amp;&amp;
-        ip4.dst == <var>VIP</var> &amp;&amp;
-        <var>P</var>.dst == <var>PORT</var></code>.  For IPv6 <var>VIPs</var>,
+        ip4.dst == <var>VIP</var> &amp;&amp; reg1[16..23] ==
+        <var>PROTO_NUM</var> &amp;&amp; reg1[0..15] == <var>PORT</var></code>.
+        For IPv6 <var>VIPs</var>,
         the flow matches <code>ct.new &amp;&amp; ip &amp;&amp; ip6.dst == <var>
-        VIP </var>&amp;&amp; <var>P</var> &amp;&amp; <var>P</var>.dst == <var>
-        PORT</var></code>. The flow's action is <code>ct_lb_mark(<var>args</var>)
+        VIP </var>&amp;&amp; reg1[16..23] == <var>PROTO_NUM</var> &amp;&amp;
+        reg1[0..15] == <var>PORT</var></code>. The flow's action is
+        <code>ct_lb_mark(<var>args</var>)
         </code>, where <var>args</var> contains comma separated IP addresses
         (and optional port numbers) to load balance to.  The address family of
         the IP addresses of <var>args</var> is the same as the address family
@@ -1135,7 +1165,7 @@
       </li>
     </ul>
 
-    <h3>Ingress Table 15: Load balancing affinity learn</h3>
+    <h3>Ingress Table 16: Load balancing affinity learn</h3>
 
     <p>
       Load balancing affinity learn table contains the following
@@ -1166,7 +1196,7 @@
       </li>
     </ul>
 
-    <h3>Ingress Table 16: Pre-Hairpin</h3>
+    <h3>Ingress Table 17: Pre-Hairpin</h3>
     <ul>
       <li>
         If the logical switch has load balancer(s) configured, then a
@@ -1184,7 +1214,7 @@
       </li>
     </ul>
 
-    <h3>Ingress Table 17: Nat-Hairpin</h3>
+    <h3>Ingress Table 18: Nat-Hairpin</h3>
     <ul>
       <li>
          If the logical switch has load balancer(s) configured, then a
@@ -1219,7 +1249,7 @@
       </li>
     </ul>
 
-    <h3>Ingress Table 18: Hairpin</h3>
+    <h3>Ingress Table 19: Hairpin</h3>
     <ul>
       <li>
         <p>
@@ -1257,7 +1287,7 @@
       </li>
     </ul>
 
-    <h3>Ingress table 19: <code>from-lport</code> ACL evaluation after LB</h3>
+    <h3>Ingress table 20: <code>from-lport</code> ACL evaluation after LB</h3>
 
     <p>
       Logical flows in this table closely reproduce those in the
@@ -1342,7 +1372,7 @@
       </li>
     </ul>
 
-    <h3>Ingress Table 20: <code>from-lport</code> ACL sampling after LB</h3>
+    <h3>Ingress Table 21: <code>from-lport</code> ACL sampling after LB</h3>
 
     <p>
       Logical flows in this table sample traffic matched by
@@ -1382,7 +1412,7 @@
       </li>
     </ul>
 
-    <h3>Ingress Table 21: <code>from-lport</code> ACL action after LB</h3>
+    <h3>Ingress Table 22: <code>from-lport</code> ACL action after LB</h3>
 
     <p>
       Logical flows in this table decide how to proceed based on the values of
@@ -1422,7 +1452,7 @@
       </li>
     </ul>
 
-    <h3>Ingress Table 22: Stateful</h3>
+    <h3>Ingress Table 23: Stateful</h3>
 
     <ul>
       <li>
@@ -1445,7 +1475,7 @@
       </li>
     </ul>
 
-    <h3>Ingress Table 23: ARP/ND responder</h3>
+    <h3>Ingress Table 24: ARP/ND responder</h3>
 
     <p>
       This table implements ARP/ND responder in a logical switch for known
@@ -1780,7 +1810,7 @@ output;
       </li>
     </ul>
 
-    <h3>Ingress Table 24: DHCP option processing</h3>
+    <h3>Ingress Table 25: DHCP option processing</h3>
 
     <p>
       This table adds the DHCPv4 options to a DHCPv4 packet from the
@@ -1841,7 +1871,7 @@ next;
       </li>
     </ul>
 
-    <h3>Ingress Table 25: DHCP responses</h3>
+    <h3>Ingress Table 26: DHCP responses</h3>
 
     <p>
       This table implements DHCP responder for the DHCP replies generated by
@@ -1922,7 +1952,7 @@ output;
       </li>
     </ul>
 
-    <h3>Ingress Table 26 DNS Lookup</h3>
+    <h3>Ingress Table 27 DNS Lookup</h3>
 
     <p>
       This table looks up and resolves the DNS names to the corresponding
@@ -1951,7 +1981,7 @@ reg0[4] = dns_lookup(); next;
       </li>
     </ul>
 
-    <h3>Ingress Table 27 DNS Responses</h3>
+    <h3>Ingress Table 28 DNS Responses</h3>
 
     <p>
       This table implements DNS responder for the DNS replies generated by
@@ -1986,7 +2016,7 @@ output;
       </li>
     </ul>
 
-    <h3>Ingress table 28 External ports</h3>
+    <h3>Ingress table 29 External ports</h3>
 
     <p>
       Traffic from the <code>external</code> logical ports enter the ingress
@@ -2029,7 +2059,7 @@ output;
       </li>
     </ul>
 
-    <h3>Ingress Table 29 Destination Lookup</h3>
+    <h3>Ingress Table 30 Destination Lookup</h3>
 
     <p>
       This table implements switching behavior.  It contains these logical
@@ -2255,7 +2285,7 @@ output;
       </li>
     </ul>
 
-    <h3>Ingress Table 30 Destination unknown</h3>
+    <h3>Ingress Table 31 Destination unknown</h3>
 
     <p>
       This table handles the packets whose destination was not found or
@@ -2331,6 +2361,8 @@ output;
     <p>
       This is similar to ingress table <code>Pre-ACLs</code> except for
      <code>to-lport</code> traffic.
+     Except when the option enable-stateless-acl-with-lb is enabled:
+     REGBIT_ACL_STATELESS ignored.
     </p>
 
     <p>
@@ -2456,7 +2488,7 @@ output;
         A priority 34000 logical flow is added for each logical port which
         has DHCPv4 options defined to allow the DHCPv4 reply packet and which has
         DHCPv6 options defined to allow the DHCPv6 reply packet from the
-        <code>Ingress Table 18: DHCP responses</code>. This is indicated by
+        <code>Ingress Table 26: DHCP responses</code>. This is indicated by
         setting the allow bit.
       </li>
 
@@ -2464,7 +2496,7 @@ output;
         A priority 34000 logical flow is added for each logical switch datapath
         configured with DNS records with the match <code>udp.dst = 53</code>
         to allow the DNS reply packet from the
-        <code>Ingress Table 20: DNS responses</code>. This is indicated by
+        <code>Ingress Table 28: DNS responses</code>. This is indicated by
         setting the allow bit.
       </li>
 
@@ -3823,7 +3855,42 @@ next;
       <code>inport == DGP &amp;&amp; is_chassis_resident(CHASSIS)</code>.
     </p>
 
-   <h3>Ingress Table 8: Load balancing affinity check</h3>
+   <h3>Ingress Table 8: Connection tracking field extraction</h3>
+
+    <p>
+      This table extracts connection tracking fields for new connections
+      and stores them in registers for use by subsequent load balancing
+      stages.
+    </p>
+
+    <ul>
+      <li>
+        <p>
+          For all new connections (<code>ct.new</code>), a priority-100 flow
+          extracts the connection tracking protocol and destination port
+          information into registers:
+        </p>
+
+        <pre>
+reg1[16..23] = ct_proto();
+reg1[0..15] = ct_tp_dst();
+next;
+        </pre>
+
+        <p>
+          This stores the connection tracking destination port in
+          <code>REG_CT_TP_DST</code> (reg1[0..15]) and the protocol
+          in <code>REG_CT_PROTO</code> (reg1[16..23]).
+        </p>
+      </li>
+
+      <li>
+        A priority-0 flow that matches all packets and advances to the
+        next table with action <code>next;</code>.
+      </li>
+    </ul>
+
+    <h3>Ingress Table 9: Load balancing affinity check</h3>
 
     <p>
       Load balancing affinity check table contains the following
@@ -3837,11 +3904,13 @@ next;
         column, that includes a L4 port <var>PORT</var> of protocol
         <var>P</var> and IPv4 or IPv6 address <var>VIP</var>, a priority-100
         flow that matches on <code>ct.new &amp;&amp; ip &amp;&amp;
-        ip.dst == <var>VIP</var> &amp;&amp; <var>P</var> &amp;&amp; P.dst
-        == </code> <code><var>PORT</var></code> (<code>xxreg0 == <var>VIP
-        </var></code> in the IPv6 case) with an action of <code>reg0 = ip.dst;
-        reg9[16..31] = P.dst; reg9[6] = chk_lb_aff(); next;</code>
-        (<code>xxreg0 == <var>ip6.dst</var> </code> in the IPv6 case)
+        ip.dst == <var>VIP</var> &amp;&amp; REG_CT_PROTO == <var>P_NUM</var>
+        &amp;&amp; REG_CT_TP_DST == <var>PORT</var></code> (<code>xxreg0 ==
+        <var>VIP</var></code> in the IPv6 case) with an action of
+        <code>reg0 = ip.dst; reg9[16..31] = P.dst; reg9[6] = chk_lb_aff();
+        next;</code> (<code>xxreg0 == <var>ip6.dst</var> </code> in the IPv6
+        case), where <var>P_NUM</var> is the protocol number (6 for TCP, 17
+        for UDP, 132 for SCTP).
       </li>
 
       <li>
@@ -3850,7 +3919,7 @@ next;
       </li>
     </ul>
 
-    <h3>Ingress Table 9: DNAT</h3>
+    <h3>Ingress Table 10: DNAT</h3>
 
     <p>
       Packets enter the pipeline with destination IP address that needs to
@@ -3874,12 +3943,15 @@ next;
         column, that includes a L4 port <var>PORT</var> of protocol
         <var>P</var> and IPv4 or IPv6 address <var>VIP</var>, a priority-150
         flow that matches on <code>reg9[6] == 1 &amp;&amp; ct.new &amp;&amp;
-        ip &amp;&amp; ip.dst == <var>VIP</var> &amp;&amp; <var>P</var> &amp;&amp;
-        P.dst == </code> <code><var>PORT</var></code> with an action of
+        ip &amp;&amp; ip.dst == <var>VIP</var> &amp;&amp; REG_CT_PROTO ==
+        <var>P_NUM</var> &amp;&amp;
+        REG_CT_TP_DST == <var>PORT</var></code> with an action of
         <code>ct_lb_mark(<var>args</var>) </code>, where <var>args</var>
         contains comma separated IP addresses (and optional port numbers)
-        to load balance to.  The address family of the IP addresses of
-        <var>args</var> is the same as the address family of <var>VIP</var>.
+        to load balance to, and <var>P_NUM</var> is the protocol number
+        (6 for TCP, 17 for UDP, 132 for SCTP). The address family of the IP
+        addresses of <var>args</var> is the same as the address family of
+        <var>VIP</var>.
       </li>
 
       <li>
@@ -3899,11 +3971,13 @@ next;
           includes a L4 port <var>PORT</var> of protocol <var>P</var> and IPv4
           or IPv6 address <var>VIP</var>, a priority-120 flow that matches on
           <code>ct.new &amp;&amp; !ct.rel &amp;&amp; ip &amp;&amp; ip.dst ==
-          <var>VIP</var> &amp;&amp; <var>P</var> &amp;&amp; P.dst ==
-          </code> <code><var>PORT</var></code> with an action of
+          <var>VIP</var> &amp;&amp; REG_CT_PROTO == <var>P_NUM</var> &amp;&amp;
+          REG_CT_TP_DST == <var>PORT</var></code> with an action of
           <code>ct_lb_mark(<var>args</var>)</code>, where <var>args</var> contains
           comma separated IPv4 or IPv6 addresses (and optional port numbers) to
-          load balance to.  If the router is configured to force SNAT any
+          load balance to, and <var>P_NUM</var> is the protocol number
+          (6 for TCP, 17 for UDP, 132 for SCTP). If the router is configured
+          to force SNAT any
           load-balanced packets, the above action will be replaced by
           <code>flags.force_snat_for_lb = 1; ct_lb_mark(<var>args</var>;
           force_snat);</code>.
@@ -4109,7 +4183,7 @@ next;
       </li>
     </ul>
 
-   <h3>Ingress Table 10: Load balancing affinity learn</h3>
+       <h3>Ingress Table 11: Load balancing affinity learn</h3>
 
     <p>
       Load balancing affinity learn table contains the following
@@ -4137,7 +4211,7 @@ next;
       </li>
     </ul>
 
-   <h3>Ingress Table 11: ECMP symmetric reply processing</h3>
+       <h3>Ingress Table 12: ECMP symmetric reply processing</h3>
     <ul>
       <li>
         If ECMP routes with symmetric reply are configured in the
@@ -4156,7 +4230,7 @@ next;
       </li>
     </ul>
 
-   <h3>Ingress Table 12: IPv6 ND RA option processing</h3>
+       <h3>Ingress Table 13: IPv6 ND RA option processing</h3>
 
     <ul>
       <li>
@@ -4186,7 +4260,7 @@ reg0[5] = put_nd_ra_opts(<var>options</var>);next;
       </li>
     </ul>
 
-    <h3>Ingress Table 13: IPv6 ND RA responder</h3>
+    <h3>Ingress Table 14: IPv6 ND RA responder</h3>
 
     <p>
       This table implements IPv6 ND RA responder for the IPv6 ND RA replies
@@ -4231,7 +4305,7 @@ output;
       </li>
     </ul>
 
-   <h3>Ingress Table 14: IP Routing Pre</h3>
+       <h3>Ingress Table 15: IP Routing Pre</h3>
 
     <p>
       If a packet arrived at this table from Logical Router Port <var>P</var>
@@ -4261,7 +4335,7 @@ output;
       </li>
     </ul>
 
-   <h3>Ingress Table 15: IP Routing</h3>
+       <h3>Ingress Table 16: IP Routing</h3>
 
     <p>
       A packet that arrives at this table is an IP packet that should be
@@ -4478,7 +4552,7 @@ reg8[16..31] = <var>MID1</var>);
       </li>
     </ul>
 
-    <h3>Ingress Table 16: IP_ROUTING_ECMP</h3>
+    <h3>Ingress Table 17: IP_ROUTING_ECMP</h3>
 
     <p>
       This table implements the second part of IP routing for ECMP routes
@@ -4535,7 +4609,7 @@ outport = <var>P</var>;
       </li>
     </ul>
 
-   <h3>Ingress Table 17: Router policies</h3>
+       <h3>Ingress Table 18: Router policies</h3>
     <p>
       This table adds flows for the logical router policies configured
       on the logical router. Please see the
@@ -4607,7 +4681,7 @@ next;
       </li>
     </ul>
 
-    <h3>Ingress Table 18: ECMP handling for router policies</h3>
+    <h3>Ingress Table 19: ECMP handling for router policies</h3>
     <p>
       This table handles the ECMP for the router policies configured
       with multiple nexthops.
@@ -4656,7 +4730,7 @@ outport = <var>P</var>
       </li>
     </ul>
 
-    <h3>Ingress Table 19: DHCP Relay Response Check</h3>
+    <h3>Ingress Table 20: DHCP Relay Response Check</h3>
     <p>
       This stage process the DHCP response packets coming from the DHCP server.
     </p>
@@ -4690,7 +4764,7 @@ outport = <var>P</var>
       </li>
     </ul>
 
-    <h3>Ingress Table 20: DHCP Relay Response</h3>
+    <h3>Ingress Table 21: DHCP Relay Response</h3>
     <p>
       This stage process the DHCP response packets on which
       <code>dhcp_relay_resp_chk</code> action is applied in the previous stage.
@@ -4733,7 +4807,7 @@ output;
       </li>
     </ul>
 
-   <h3>Ingress Table 21: ARP/ND Resolution</h3>
+       <h3>Ingress Table 22: ARP/ND Resolution</h3>
 
     <p>
       Any packet that reaches this table is an IP packet whose next-hop
@@ -4947,7 +5021,7 @@ output;
 
     </ul>
 
-   <h3>Ingress Table 22: Check packet length</h3>
+       <h3>Ingress Table 23: Check packet length</h3>
 
     <p>
       For distributed logical routers or gateway routers with gateway
@@ -4986,7 +5060,7 @@ next;
       and advances to the next table.
     </p>
 
-   <h3>Ingress Table 23: Handle larger packets</h3>
+       <h3>Ingress Table 24: Handle larger packets</h3>
 
     <p>
       For distributed logical routers or gateway routers with gateway port
@@ -5049,7 +5123,7 @@ icmp6 {
       and advances to the next table.
     </p>
 
-   <h3>Ingress Table 24: Gateway Redirect</h3>
+       <h3>Ingress Table 25: Gateway Redirect</h3>
 
     <p>
       For distributed logical routers where one or more of the logical router
@@ -5133,7 +5207,7 @@ icmp6 {
       </li>
     </ul>
 
-   <h3>Ingress Table 25: Network ID</h3>
+       <h3>Ingress Table 26: Network ID</h3>
 
     <p>
       This table contains flows that set <code>flags.network_id</code> for
@@ -5188,7 +5262,7 @@ icmp6 {
       </li>
     </ul>
 
-   <h3>Ingress Table 26: ARP Request</h3>
+       <h3>Ingress Table 27: ARP Request</h3>
 
     <p>
       In the common case where the Ethernet destination has been resolved, this

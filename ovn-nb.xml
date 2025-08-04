@@ -449,7 +449,7 @@
           through the global <ref db="OVN_IC_Southbound"/> database.  Only
           routers with ports connected to interconnection transit switches
           participate in route advertisement.  For each of these routers, there
-          are two types of routes to be advertised:
+          are three types of routes to be advertised:
         </p>
 
         <p>
@@ -460,6 +460,11 @@
           Secondly, the <code>networks</code> configured in the logical router
           ports that are not on the transit switches are advertised.  These
           are considered as directly connected subnets on the router.
+        </p>
+
+        <p>
+          Thirdly, the vips of the load balancers associated with the logical
+          router are advertised.
         </p>
 
         <p>
@@ -500,6 +505,20 @@
           <ref db="OVN_IC_Southbound"/> database.  Default is
           <code>false</code>.  This option takes effect only when option
           <code>ic-route-learn</code> is <code>true</code>.
+        </column>
+
+        <column name="options" key="ic-route-adv-lb">
+          A boolean value that enables advertising routes for load balancer
+          vips to the global <ref db="OVN_IC_Southbound"/> database.  Default
+          is <code>false</code>.  This option takes effect only when option
+          <code>ic-route-adv</code> is <code>true</code>.
+        </column>
+
+        <column name="options" key="ic-route-learn-lb">
+          A boolean value that enables learning routes for load balancer
+          routes from the global <ref db="OVN_IC_Southbound"/> database.
+          Default is <code>false</code>.  This option takes effect only when
+          option <code>ic-route-learn</code> is <code>true</code>.
         </column>
 
         <column name="options" key="ic-route-denylist">
@@ -553,7 +572,7 @@
       sampled while a value of 65535 corresponds to all packets being sampled.
     </column>
     <column name="set_id">
-      The 8-bit integer identifier of the set of of collectors to send
+      The 32-bit integer identifier of the set of of collectors to send
       packets to. See Flow_Sample_Collector_Set Table in ovs-vswitchd's
       database schema.
     </column>
@@ -838,6 +857,14 @@
         value 0 means unlimited. When the option is not present the limit
         is not set and the zone limit is derived from OvS default datapath
         limit.
+      </column>
+
+      <column name="other_config" key="enable-stateless-acl-with-lb"
+              type='{"type": "boolean"}'>
+        This option must be set to true for stateless ACL to work with load
+        balancers. When enabled, packets with the ct.inv flag will not be
+        dropped, even if use_ct_inv_match is set to true.
+        Default: <code>false</code>.
       </column>
     </group>
 
@@ -3200,8 +3227,29 @@ or
         for established sessions as we will commit everything in addition
         to already existing stateful NATs and LBs.
       </column>
-    </group>
 
+      <column name="options" key="ic-route-filter-adv">
+        <p>
+          This option expects list of CIDRs delimited by "," that's present
+          in the Logical Router. A route will not be advertised if the
+          route's prefix belongs to any of the CIDRs listed.
+
+          This allows to filter CIDR prefixes in the process of advertising
+          routes in <code>ovn-ic</code> daemon.
+        </p>
+      </column>
+
+      <column name="options" key="ic-route-filter-learn">
+        <p>
+          This option expects list of CIDRs delimited by "," that's present
+          in the Logical Router. A route will not be learned if the
+          route's prefix belongs to any of the CIDRs listed.
+
+          This allows to filter CIDR prefixes in the process of learning
+          routes in <code>ovn-ic</code> daemon.
+        </p>
+      </column>
+    </group>
     <group title="Common Columns">
       <column name="external_ids">
         See <em>External IDs</em> at the beginning of this document.
@@ -4179,6 +4227,27 @@ or
         instead of the autodiscovery. Also it is then irrelevant if the port
         is bound locally.
       </column>
+      <column name="options" key="ic-route-filter-adv">
+         <p>
+           This option expects list of CIDRs delimited by "," that's present
+           in the Logical Router Port. A route will be advertised if the
+           route's prefix belongs to any of the CIDRs listed.
+
+           This allows to filter CIDR prefixes in the process of advertising
+           routes in <code>ovn-ic</code> daemon.
+         </p>
+       </column>
+
+       <column name="options" key="ic-route-filter-learn">
+         <p>
+           This option expects list of CIDRs delimited by "," that's present
+           in the Logical Router Port. A route will be learned if the
+           route's prefix belongs to any of the CIDRs listed.
+
+           This allows to filter CIDR prefixes in the process of learning
+           routes in <code>ovn-ic</code> daemon.
+         </p>
+       </column>
     </group>
 
     <group title="Attachment">
@@ -4256,9 +4325,9 @@ or
     </p>
 
     <p>
-      When multiple routes match a packet, the longest-prefix match is chosen.
-      For a given prefix length, a <code>dst-ip</code> route is preferred over
-      a <code>src-ip</code> route.
+      When multiple routes match a packet, a <code>dst-ip</code> route is
+      preferred over a <code>src-ip</code> route. Among the same type of
+      routes, the longest-prefix match is chosen.
     </p>
 
     <p>

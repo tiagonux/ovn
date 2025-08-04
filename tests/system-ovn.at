@@ -5187,6 +5187,98 @@ AT_CLEANUP
 ])
 
 OVN_FOR_EACH_NORTHD([
+AT_SETUP([enable-stateless-acl-with-lb usage])
+AT_SKIP_IF([test $HAVE_NC = no])
+
+ovn_start
+OVS_TRAFFIC_VSWITCHD_START()
+
+ADD_BR([br-int])
+
+# Set external-ids in br-int needed for ovn-controller
+ovs-vsctl \
+        -- set Open_vSwitch . external-ids:system-id=hv1 \
+        -- set Open_vSwitch . external-ids:ovn-remote=unix:$ovs_base/ovn-sb/ovn-sb.sock \
+        -- set Open_vSwitch . external-ids:ovn-encap-type=geneve \
+        -- set Open_vSwitch . external-ids:ovn-encap-ip=169.0.0.1 \
+        -- set bridge br-int fail-mode=secure other-config:disable-in-band=true
+
+# Start ovn-controller
+start_daemon ovn-controller
+
+# Logical network:
+# One logical switch with IPv4 load balancers that hairpin the traffic.
+check ovn-nbctl ls-add sw
+check ovn-nbctl lsp-add sw lsp1 -- lsp-set-addresses lsp1 00:00:00:00:00:01
+check ovn-nbctl lsp-add sw lsp2 -- lsp-set-addresses lsp2 00:00:00:00:00:02
+
+check ovn-nbctl lb-add lb-ipv4-tcp 88.88.88.88:8080 42.42.42.1:4041 tcp
+check ovn-nbctl ls-lb-add sw lb-ipv4-tcp
+
+check ovn-nbctl lr-add rtr
+check ovn-nbctl lrp-add rtr rtr-sw 00:00:00:00:01:00 42.42.42.254/24
+check ovn-nbctl lsp-add sw sw-rtr                       \
+    -- lsp-set-type sw-rtr router                 \
+    -- lsp-set-addresses sw-rtr 00:00:00:00:01:00 \
+    -- lsp-set-options sw-rtr router-port=rtr-sw
+
+ADD_NAMESPACES(lsp1)
+ADD_VETH(lsp1, lsp1, br-int, "42.42.42.1/24", "00:00:00:00:00:01", \
+         "42.42.42.254")
+
+ADD_NAMESPACES(lsp2)
+ADD_VETH(lsp2, lsp2, br-int, "42.42.42.2/24", "00:00:00:00:00:02", \
+         "42.42.42.254")
+
+# Wait for ovn-controller to catch up.
+wait_for_ports_up
+check ovn-nbctl --wait=hv sync
+
+# Start IPv4 TCP server on lsp1.
+NETNS_DAEMONIZE([lsp1], [nc -l -k 42.42.42.1 4041], [lsp1.pid])
+
+# Send the packet to VIP.
+NS_CHECK_EXEC([lsp1], [nc -z 88.88.88.88 8080], [0], [ignore], [ignore])
+NS_CHECK_EXEC([lsp2], [nc -z 88.88.88.88 8080], [0], [ignore], [ignore])
+
+check ovn-nbctl --wait=hv acl-add sw to-lport 2000 'ip' allow-stateless
+check ovn-nbctl --wait=hv acl-add sw from-lport 2000 'ip' allow-stateless
+
+# To provide work of load balancer with stateless ACL this is necessary
+# to set enable-stateless-acl-lb to true.
+check ovn-nbctl set logical_switch sw other_config:enable-stateless-acl-with-lb=true
+
+check ovn-nbctl --wait=hv sync
+
+# Send the packet to VIP after add stateless acl.
+NS_CHECK_EXEC([lsp1], [nc -z 88.88.88.88 8080], [0], [ignore], [ignore])
+NS_CHECK_EXEC([lsp2], [nc -z 88.88.88.88 8080], [0], [ignore], [ignore])
+
+check ovn-nbctl --wait=hv acl-add sw to-lport 2001 'ip' allow-related
+check ovn-nbctl --wait=hv acl-add sw from-lport 2001 'ip' allow-related
+
+# Send the packet to VIP after add related acls.
+NS_CHECK_EXEC([lsp1], [nc -z 88.88.88.88 8080], [0], [ignore], [ignore])
+NS_CHECK_EXEC([lsp2], [nc -z 88.88.88.88 8080], [0], [ignore], [ignore])
+
+OVN_CLEANUP_CONTROLLER([hv1])
+
+as ovn-sb
+OVS_APP_EXIT_AND_WAIT([ovsdb-server])
+
+as ovn-nb
+OVS_APP_EXIT_AND_WAIT([ovsdb-server])
+
+as northd
+OVS_APP_EXIT_AND_WAIT([ovn-northd])
+
+as
+OVS_TRAFFIC_VSWITCHD_STOP(["/failed to query port patch-.*/d
+/connection dropped.*/d"])
+AT_CLEANUP
+])
+
+OVN_FOR_EACH_NORTHD([
 AT_SETUP([Load Balancer LS hairpin IPv6])
 AT_SKIP_IF([test $HAVE_NC = no])
 AT_KEYWORDS([lb])
@@ -6063,7 +6155,8 @@ NS_CHECK_EXEC([vm2], [nc 66.66.66.66 666 -p 2001 -z], [0], [ignore], [ignore])
 # - one in vm2's zone (dnat)
 AT_CHECK([ovs-appctl dpctl/dump-conntrack | grep 2001 |             \
 grep "orig=.src=42\.42\.42\.3" |                                    \
-sed -e 's/port=2001/port=<clnt_s_port>/g'                           \
+sed -e 's/sport=2001/sport=<clnt_s_port>/g'                         \
+    -e 's/dport=2001/dport=<clnt_s_port>/g'                         \
     -e 's/sport=4242,dport=[[0-9]]\+/sport=4242,dport=<rnd_port>/g' \
     -e 's/state=[[0-9_A-Z]]*/state=<cleared>/g'                     \
     -e 's/zone=[[0-9]]*/zone=<cleared>/' | sort], [0], [dnl
@@ -6172,7 +6265,8 @@ NS_CHECK_EXEC([vm2], [nc 6666::1 666 -p 2001 -z], [0], [ignore], [ignore])
 # - one in vm2's zone (dnat)
 AT_CHECK([ovs-appctl dpctl/dump-conntrack | grep 2001 |             \
 grep "orig=.src=4242::3" |                                         \
-sed -e 's/port=2001/port=<clnt_s_port>/g'                           \
+sed -e 's/sport=2001/sport=<clnt_s_port>/g'                        \
+    -e 's/dport=2001/dport=<clnt_s_port>/g'                        \
     -e 's/sport=4242,dport=[[0-9]]\+/sport=4242,dport=<rnd_port>/g' \
     -e 's/state=[[0-9_A-Z]]*/state=<cleared>/g'                     \
     -e 's/zone=[[0-9]]*/zone=<cleared>/' | sort], [0], [dnl
@@ -10829,7 +10923,10 @@ NS_CHECK_EXEC([ns_ls1p1], [ip addr del 10.0.0.11/24 dev ls1p1;
                            ip addr add 10.0.0.88/24 dev ls1p1;
                            ip route add default via 10.0.0.1])
 NS_EXEC([ns_ls1p1], [arping -U -c 1 -w 2 -I ls1p1 10.0.0.88])
+
+wait_column "ls1p1" Port_Binding virtual_parent logical_port=vip
 wait_for_ports_up vip
+wait_column "00:00:00:00:01:11" Mac_Binding mac ip="10.0.0.88"
 check ovn-nbctl --wait=hv sync
 
 # ping virtual IP from ext1
@@ -10852,6 +10949,8 @@ NS_CHECK_EXEC([ns_ls1p2], [ip addr del 10.0.0.12/24 dev ls1p2;
 NS_EXEC([ns_ls1p2], [arping -U -c 1 -w 2 -I ls1p2 10.0.0.88])
 
 wait_column "ls1p2" Port_Binding virtual_parent logical_port=vip
+wait_for_ports_up vip
+wait_column "00:00:00:00:01:12" Mac_Binding mac ip="10.0.0.88"
 check ovn-nbctl --wait=hv sync
 
 # ping virtual IP from ext1
@@ -12472,86 +12571,6 @@ OVS_TRAFFIC_VSWITCHD_STOP(["/failed to query port patch-.*/d
 AT_CLEANUP
 
 OVN_FOR_EACH_NORTHD([
-AT_SETUP([load balancing in gateway router - client behind LB with SNAT])
-AT_SKIP_IF([test $HAVE_NC = no])
-AT_KEYWORDS([lb])
-
-ovn_start
-OVS_TRAFFIC_VSWITCHD_START()
-ADD_BR([br-int])
-
-check ovs-vsctl \
-        -- set Open_vSwitch . external-ids:system-id=hv1 \
-        -- set Open_vSwitch . external-ids:ovn-remote=unix:$ovs_base/ovn-sb/ovn-sb.sock \
-        -- set Open_vSwitch . external-ids:ovn-encap-type=geneve \
-        -- set Open_vSwitch . external-ids:ovn-encap-ip=169.0.0.1 \
-        -- set bridge br-int fail-mode=secure other-config:disable-in-band=true
-
-start_daemon ovn-controller
-
-check ovn-nbctl lr-add lr \
-    -- set logical_router lr options:chassis=hv1
-check ovn-nbctl lrp-add lr lr-ls1 00:00:00:00:01:00 41.41.41.2/24
-check ovn-nbctl lrp-add lr lr-ls2 00:00:00:00:02:00 42.42.42.2/24
-check ovn-nbctl ls-add ls1
-check ovn-nbctl ls-add ls2
-
-check ovn-nbctl lsp-add ls1 ls1-lr
-check ovn-nbctl lsp-set-addresses ls1-lr 00:00:00:00:01:00
-check ovn-nbctl lsp-set-type ls1-lr router
-check ovn-nbctl lsp-set-options ls1-lr router-port=lr-ls1
-check ovn-nbctl lsp-add ls1 vm1
-check ovn-nbctl lsp-set-addresses vm1 00:00:00:00:00:01
-
-check ovn-nbctl lsp-add ls2 ls2-lr
-check ovn-nbctl lsp-set-addresses ls2-lr 00:00:00:00:02:00
-check ovn-nbctl lsp-set-type ls2-lr router
-check ovn-nbctl lsp-set-options ls2-lr router-port=lr-ls2
-check ovn-nbctl lsp-add ls2 vm2
-check ovn-nbctl lsp-set-addresses vm2 00:00:00:00:00:02
-
-dnl LB using the router IP connected to vm2 as VIP.
-check ovn-nbctl lb-add lb-test 42.42.42.2:8080 41.41.41.1:8080 tcp \
-    -- lr-lb-add lr lb-test
-
-dnl SNAT everything coming from vm1 to the router IP (towards vm2).
-check ovn-nbctl lr-nat-add lr snat 42.42.42.2 41.41.41.1
-
-ADD_NAMESPACES(vm1)
-ADD_VETH(vm1, vm1, br-int, "41.41.41.1/24", "00:00:00:00:00:01", "41.41.41.2")
-
-ADD_NAMESPACES(vm2)
-ADD_VETH(vm2, vm2, br-int, "42.42.42.1/24", "00:00:00:00:00:02", "42.42.42.2")
-
-dnl Start a server on vm2.
-NETNS_DAEMONIZE([vm2], [nc -l -k 42.42.42.1 80], [vm2.pid])
-
-dnl Wait for ovn-controller to catch up.
-wait_for_ports_up
-check ovn-nbctl --wait=hv sync
-
-dnl Test the connection originating something that uses the same source port
-dnl as the LB VIP.
-NS_CHECK_EXEC([vm1], [nc -z -p 8080 42.42.42.1 80], 0, [ignore], [ignore])
-
-OVN_CLEANUP_CONTROLLER([hv1])
-
-as ovn-sb
-OVS_APP_EXIT_AND_WAIT([ovsdb-server])
-
-as ovn-nb
-OVS_APP_EXIT_AND_WAIT([ovsdb-server])
-
-as northd
-OVS_APP_EXIT_AND_WAIT([ovn-northd])
-
-as
-OVS_TRAFFIC_VSWITCHD_STOP(["/failed to query port patch-.*/d
-/connection dropped.*/d"])
-AT_CLEANUP
-])
-
-OVN_FOR_EACH_NORTHD([
 AT_SETUP([load balancing affinity sessions - auto clear learnt flows])
 AT_SKIP_IF([test $HAVE_NC = no])
 AT_KEYWORDS([lb])
@@ -13415,7 +13434,7 @@ ADD_VETH(vm1, vm1, br-int, "42.42.42.2/24", "00:00:00:00:00:01", "42.42.42.1")
 ADD_NAMESPACES(vm2)
 ADD_VETH(vm2, vm2, br-int, "42.42.42.3/24", "00:00:00:00:00:02", "42.42.42.1")
 
-collector1=$(ovn-nbctl create Sample_Collector id=1 name=c1 probability=65535 set_id=100)
+collector1=$(ovn-nbctl create Sample_Collector id=1 name=c1 probability=65535 set_id=4294967295)
 collector2=$(ovn-nbctl create Sample_Collector id=2 name=c2 probability=65535 set_id=200)
 check_row_count nb:Sample_Collector 2
 
@@ -13481,7 +13500,7 @@ OVS_WAIT_UNTIL([grep -q 'Startup nfcapd.' collector.err])
 dnl Configure the OVS flow sample collector.
 ovs-vsctl --id=@br get Bridge br-int \
     -- --id=@ipfix create IPFIX targets=\"127.0.0.1:4242\" template_interval=1 \
-    -- --id=@cs create Flow_Sample_Collector_Set id=100 bridge=@br ipfix=@ipfix
+    -- --id=@cs create Flow_Sample_Collector_Set id=4294967295 bridge=@br ipfix=@ipfix
 
 check ovn-nbctl --wait=hv sync
 dnl And wait for it to be up and running.
@@ -13612,7 +13631,7 @@ ADD_VETH(vm1, vm1, br-int, "42.42.42.2/24", "00:00:00:00:00:01", "42.42.42.1")
 ADD_NAMESPACES(vm2)
 ADD_VETH(vm2, vm2, br-int, "42.42.42.3/24", "00:00:00:00:00:02", "42.42.42.1")
 
-collector1=$(ovn-nbctl create Sample_Collector id=1 name=c1 probability=65535 set_id=100)
+collector1=$(ovn-nbctl create Sample_Collector id=1 name=c1 probability=65535 set_id=4294967295)
 check_row_count nb:Sample_Collector 1
 
 check_uuid ovn-nbctl create Sampling_App type="acl-new" id="42"
@@ -13650,7 +13669,7 @@ OVS_WAIT_UNTIL([grep -q 'Startup nfcapd.' collector.err])
 dnl Configure the OVS flow sample collector.
 ovs-vsctl --id=@br get Bridge br-int \
     -- --id=@ipfix create IPFIX targets=\"127.0.0.1:4242\" template_interval=1 \
-    -- --id=@cs create Flow_Sample_Collector_Set id=100 bridge=@br ipfix=@ipfix
+    -- --id=@cs create Flow_Sample_Collector_Set id=4294967295 bridge=@br ipfix=@ipfix
 
 check ovn-nbctl --wait=hv sync
 dnl And wait for it to be up and running.
@@ -13739,7 +13758,7 @@ ADD_VETH(vm1, vm1, br-int, "42.42.42.2/24", "00:00:00:00:00:01", "42.42.42.1")
 ADD_NAMESPACES(vm2)
 ADD_VETH(vm2, vm2, br-int, "42.42.42.3/24", "00:00:00:00:00:02", "42.42.42.1")
 
-collector1=$(ovn-nbctl create Sample_Collector id=1 name=c1 probability=65535 set_id=100)
+collector1=$(ovn-nbctl create Sample_Collector id=1 name=c1 probability=65535 set_id=4294967295)
 check_row_count nb:Sample_Collector 1
 
 check_uuid ovn-nbctl create Sampling_App type="acl-new" id="42"
@@ -13775,7 +13794,7 @@ OVS_WAIT_UNTIL([grep -q 'Startup nfcapd.' collector.err])
 dnl Configure the OVS flow sample collector.
 ovs-vsctl --id=@br get Bridge br-int \
     -- --id=@ipfix create IPFIX targets=\"127.0.0.1:4242\" template_interval=1 \
-    -- --id=@cs create Flow_Sample_Collector_Set id=100 bridge=@br ipfix=@ipfix
+    -- --id=@cs create Flow_Sample_Collector_Set id=4294967295 bridge=@br ipfix=@ipfix
 
 check ovn-nbctl --wait=hv sync
 dnl And wait for it to be up and running.
@@ -13869,7 +13888,7 @@ check ovn-nbctl --wait=sb sync
 ADD_NAMESPACES(vm1)
 ADD_VETH(vm1, vm1, br-int, "42.42.42.2/24", "00:00:00:00:00:01", "42.42.42.1")
 
-collector1=$(ovn-nbctl create Sample_Collector id=1 name=c1 probability=65535 set_id=100)
+collector1=$(ovn-nbctl create Sample_Collector id=1 name=c1 probability=65535 set_id=4294967295)
 collector2=$(ovn-nbctl create Sample_Collector id=2 name=c2 probability=65535 set_id=200)
 check_row_count nb:Sample_Collector 2
 
@@ -13904,7 +13923,7 @@ OVS_WAIT_UNTIL([grep -q 'Startup nfcapd.' collector.err])
 dnl Configure the OVS flow sample collector.
 ovs-vsctl --id=@br get Bridge br-int \
     -- --id=@ipfix create IPFIX targets=\"127.0.0.1:4242\" template_interval=1 \
-    -- --id=@cs create Flow_Sample_Collector_Set id=100 bridge=@br ipfix=@ipfix
+    -- --id=@cs create Flow_Sample_Collector_Set id=4294967295 bridge=@br ipfix=@ipfix
 
 check ovn-nbctl --wait=hv sync
 dnl And wait for it to be up and running.
@@ -16247,9 +16266,8 @@ blackhole 198.51.100.0/24 proto ovn metric 1000
 233.252.0.0/24 via 192.168.10.10 dev lo onlink
 233.253.0.0/24 via 192.168.20.20 dev hv1-mll onlink])
 
-# Stoping with --restart will not touch the routes.
-check ovn-appctl -t ovn-controller exit --restart
-OVS_WAIT_UNTIL([test "$(ovn-appctl -t ovn-controller debug/status)" != "running"])
+# Stopping with --restart will not touch the routes.
+OVN_CONTROLLER_EXIT([],[--restart])
 OVN_ROUTE_EQUAL([ovnvrf1338], [dnl
 blackhole 192.0.2.1 proto ovn metric 1000
 blackhole 192.0.2.2 proto ovn metric 100
@@ -16591,9 +16609,8 @@ blackhole 198.51.100.0/24 proto ovn metric 1000
 233.252.0.0/24 via 192.168.10.10 dev lo onlink
 233.253.0.0/24 via 192.168.20.20 dev hv1-mll onlink])
 
-# Stoping with --restart will not touch the routes.
-check ovn-appctl -t ovn-controller exit --restart
-OVS_WAIT_UNTIL([test "$(ovn-appctl -t ovn-controller debug/status)" != "running"])
+# Stopping with --restart will not touch the routes.
+OVN_CONTROLLER_EXIT([],[--restart])
 OVN_ROUTE_EQUAL([ovnvrf1337], [dnl
 blackhole 192.0.2.1 proto ovn metric 100
 blackhole 192.0.2.2 proto ovn metric 100
@@ -17806,5 +17823,150 @@ as
 OVS_TRAFFIC_VSWITCHD_STOP(["/failed to query port patch-.*/d
 /connection dropped.*/d"])
 
+AT_CLEANUP
+])
+
+OVN_FOR_EACH_NORTHD([
+AT_SETUP([LB correctly handles fragmented traffic])
+AT_KEYWORDS([ovnlb])
+
+CHECK_CONNTRACK()
+CHECK_CONNTRACK_NAT()
+
+ovn_start
+OVS_TRAFFIC_VSWITCHD_START()
+ADD_BR([br-int])
+ADD_BR([br-ext])
+
+# Logical network:
+# 2 logical switches "public" (192.168.1.0/24) and "internal" (172.16.1.0/24)
+# connected to a router lr.
+# internal has a server.
+# client is connected through localnet.
+
+check ovs-ofctl add-flow br-ext action=normal
+# Set external-ids in br-int needed for ovn-controller
+check ovs-vsctl \
+        -- set Open_vSwitch . external-ids:system-id=hv1 \
+        -- set Open_vSwitch . external-ids:ovn-remote=unix:$ovs_base/ovn-sb/ovn-sb.sock \
+        -- set Open_vSwitch . external-ids:ovn-encap-type=geneve \
+        -- set Open_vSwitch . external-ids:ovn-encap-ip=169.0.0.1 \
+        -- set bridge br-int fail-mode=secure other-config:disable-in-band=true \
+        -- set Open_vSwitch . external-ids:ovn-bridge-mappings=phynet:br-ext
+
+
+# Start ovn-controller
+start_daemon ovn-controller
+
+# Set the minimal fragment size for userspace DP.
+# Note that this call will fail for system DP as this setting is not supported there.
+ovs-appctl dpctl/ipf-set-min-frag v4 500
+
+check ovn-nbctl lr-add lr
+check ovn-nbctl ls-add internal
+check ovn-nbctl ls-add public
+
+check ovn-nbctl lrp-add lr lr-pub 00:00:01:01:02:03 192.168.1.1/24
+check ovn-nbctl lsp-add  public pub-lr -- set Logical_Switch_Port pub-lr \
+    type=router options:router-port=lr-pub addresses=\"00:00:01:01:02:03\"
+
+check ovn-nbctl lrp-add lr lr-internal 00:00:01:01:02:04 172.16.1.1/24
+check ovn-nbctl lsp-add internal internal-lr -- set Logical_Switch_Port internal-lr \
+    type=router options:router-port=lr-internal addresses=\"00:00:01:01:02:04\"
+
+check ovn-nbctl lsp-add public ln_port \
+                -- lsp-set-addresses ln_port unknown \
+                -- lsp-set-type ln_port localnet \
+                -- lsp-set-options ln_port network_name=phynet
+
+ADD_NAMESPACES(client)
+ADD_VETH(client, client, br-ext, "192.168.1.2/24", "f0:00:00:01:02:03", \
+         "192.168.1.1")
+NS_EXEC([client], [ip l set dev client mtu 900])
+
+ADD_NAMESPACES(server)
+ADD_VETH(server, server, br-int, "172.16.1.2/24", "f0:00:0f:01:02:03", \
+         "172.16.1.1")
+check ovn-nbctl lsp-add internal server \
+-- lsp-set-addresses server "f0:00:0f:01:02:03 172.16.1.2"
+
+check ovn-nbctl set logical_router lr options:chassis=hv1
+
+AT_DATA([client.py], [dnl
+import socket
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.sendto(b"x" * 1000, ("172.16.1.20", 4242))
+])
+
+test_fragmented_traffic() {
+    check ovn-nbctl --wait=hv sync
+
+    check ovs-appctl dpctl/flush-conntrack
+
+    NETNS_DAEMONIZE([server], [nc -l -u 172.16.1.2 4242 > /dev/null], [server.pid])
+
+    # Collect ICMP packets on client side
+    NETNS_START_TCPDUMP([client], [-U -i client -vnne udp], [tcpdump-client])
+
+    # Collect UDP packets on server side
+    NETNS_START_TCPDUMP([server], [-U -i server -vnne 'udp and ip[[6:2]] > 0 and not ip[[6]] = 64'], [tcpdump-server])
+
+    NS_CHECK_EXEC([client], [$PYTHON3 ./client.py])
+    OVS_WAIT_UNTIL([test "$(cat tcpdump-server.tcpdump | wc -l)" = "4"])
+
+    kill $(cat tcpdump-client.pid) $(cat tcpdump-server.pid) $(cat server.pid)
+}
+
+AS_BOX([LB on router without port and protocol])
+check ovn-nbctl lb-add lb1 172.16.1.20 172.16.1.2
+check ovn-nbctl lr-lb-add lr lb1
+
+test_fragmented_traffic
+
+check ovn-nbctl lr-lb-del lr
+check ovn-nbctl lb-del lb1
+
+AS_BOX([LB on router with port and protocol])
+check ovn-nbctl lb-add lb1 172.16.1.20:4242 172.16.1.2:4242 udp
+check ovn-nbctl lr-lb-add lr lb1
+
+test_fragmented_traffic
+
+check ovn-nbctl lr-lb-del lr
+check ovn-nbctl lb-del lb1
+
+AS_BOX([LB on switch without port and protocol])
+check ovn-nbctl lb-add lb1 172.16.1.20 172.16.1.2
+check ovn-nbctl ls-lb-add public lb1
+
+test_fragmented_traffic
+
+check ovn-nbctl ls-lb-del public
+check ovn-nbctl lb-del lb1
+
+AS_BOX([LB on switch witho port and protocol])
+check ovn-nbctl lb-add lb1 172.16.1.20:4242 172.16.1.2:4242 udp
+check ovn-nbctl ls-lb-add public lb1
+
+test_fragmented_traffic
+
+check ovn-nbctl ls-lb-del public
+check ovn-nbctl lb-del lb1
+
+OVN_CLEANUP_CONTROLLER([hv1])
+
+as ovn-sb
+OVS_APP_EXIT_AND_WAIT([ovsdb-server])
+
+as ovn-nb
+OVS_APP_EXIT_AND_WAIT([ovsdb-server])
+
+as northd
+OVS_APP_EXIT_AND_WAIT([ovn-northd])
+
+as
+OVS_TRAFFIC_VSWITCHD_STOP(["/failed to query port patch-.*/d
+/connection dropped.*/d"])
 AT_CLEANUP
 ])

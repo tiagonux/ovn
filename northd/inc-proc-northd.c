@@ -246,6 +246,8 @@ void inc_proc_northd_init(struct ovsdb_idl_loop *nb,
     engine_add_input(&en_northd, &en_nb_logical_router,
                      northd_nb_logical_router_handler);
     engine_add_input(&en_northd, &en_lb_data, northd_lb_data_handler);
+    engine_add_input(&en_northd, &en_nb_port_group,
+                     northd_nb_port_group_handler);
 
     engine_add_input(&en_lr_nat, &en_northd, lr_nat_northd_handler);
 
@@ -257,6 +259,7 @@ void inc_proc_northd_init(struct ovsdb_idl_loop *nb,
     engine_add_input(&en_ls_stateful, &en_northd, ls_stateful_northd_handler);
     engine_add_input(&en_ls_stateful, &en_port_group,
                      ls_stateful_port_group_handler);
+    engine_add_input(&en_ls_stateful, &en_nb_acl, ls_stateful_acl_handler);
 
     engine_add_input(&en_mac_binding_aging, &en_sb_mac_binding, NULL);
     engine_add_input(&en_mac_binding_aging, &en_northd, NULL);
@@ -319,7 +322,7 @@ void inc_proc_northd_init(struct ovsdb_idl_loop *nb,
     engine_add_input(&en_group_ecmp_route, &en_learned_route_sync,
                      group_ecmp_route_learned_route_change_handler);
 
-    engine_add_input(&en_sync_meters, &en_nb_acl, NULL);
+    engine_add_input(&en_sync_meters, &en_nb_acl, sync_meters_nb_acl_handler);
     engine_add_input(&en_sync_meters, &en_nb_meter, NULL);
     engine_add_input(&en_sync_meters, &en_sb_meter, NULL);
 
@@ -328,7 +331,6 @@ void inc_proc_northd_init(struct ovsdb_idl_loop *nb,
     engine_add_input(&en_multicast_igmp, &en_sb_multicast_group, NULL);
     engine_add_input(&en_multicast_igmp, &en_sb_igmp_group, NULL);
 
-    engine_add_input(&en_lflow, &en_nb_acl, NULL);
     engine_add_input(&en_lflow, &en_sync_meters, NULL);
     engine_add_input(&en_lflow, &en_sb_logical_flow, NULL);
     engine_add_input(&en_lflow, &en_sb_multicast_group, NULL);

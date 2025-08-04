@@ -833,8 +833,8 @@ next();
     Syntax error at `)' expecting "pipeline" or "table".
 next(10;
     Syntax error at `;' expecting `)'.
-#next(30);
-#    "next" action cannot advance beyond table 29.
+next(32);
+    "next" action cannot advance beyond table 32.
 
 next(table=lflow_table);
     formats as next;
@@ -2236,10 +2236,16 @@ mac_cache_use;
 
 # ct_nw_dst()
 reg1 = ct_nw_dst();
-    encodes as set_field:0->reg1,resubmit(,OFTABLE_CT_ORIG_NW_DST_LOAD),move:NXM_NX_REG1[[]]->NXM_NX_XXREG0[[64..95]]
+    encodes as push:NXM_NX_XXREG1[[0..31]],set_field:0/0xffffffff->xxreg1,resubmit(,OFTABLE_CT_ORIG_NW_DST_LOAD),move:NXM_NX_XXREG1[[0..31]]->NXM_NX_XXREG0[[64..95]],pop:NXM_NX_XXREG1[[0..31]]
 
 xreg1[[3..34]] = ct_nw_dst();
-    encodes as set_field:0->reg1,resubmit(,OFTABLE_CT_ORIG_NW_DST_LOAD),move:NXM_NX_REG1[[]]->NXM_NX_XXREG0[[3..34]]
+    encodes as push:NXM_NX_XXREG1[[0..31]],set_field:0/0xffffffff->xxreg1,resubmit(,OFTABLE_CT_ORIG_NW_DST_LOAD),move:NXM_NX_XXREG1[[0..31]]->NXM_NX_XXREG0[[3..34]],pop:NXM_NX_XXREG1[[0..31]]
+
+reg4 = ct_nw_dst();
+    encodes as push:NXM_NX_XXREG1[[0..31]],set_field:0/0xffffffff->xxreg1,resubmit(,OFTABLE_CT_ORIG_NW_DST_LOAD),move:NXM_NX_XXREG1[[0..31]]->NXM_NX_XXREG1[[96..127]],pop:NXM_NX_XXREG1[[0..31]]
+
+reg7 = ct_nw_dst();
+    encodes as set_field:0/0xffffffff->xxreg1,resubmit(,OFTABLE_CT_ORIG_NW_DST_LOAD),move:NXM_NX_XXREG1[[0..31]]->NXM_NX_XXREG1[[0..31]]
 
 reg1[[3..34]] = ct_nw_dst();
     Cannot select bits 3 to 34 of 32-bit field reg1.
@@ -2271,7 +2277,10 @@ ct_ip6_dst();
 
 # ct_tp_dst()
 reg1[[0..15]] = ct_tp_dst();
-    encodes as set_field:0/0xffff->reg2,resubmit(,OFTABLE_CT_ORIG_TP_DST_LOAD),move:NXM_NX_REG2[[0..15]]->NXM_NX_XXREG0[[64..79]]
+    encodes as push:NXM_NX_XXREG1[[0..15]],set_field:0/0xffff->xxreg1,resubmit(,OFTABLE_CT_ORIG_TP_DST_LOAD),move:NXM_NX_XXREG1[[0..15]]->NXM_NX_XXREG0[[64..79]],pop:NXM_NX_XXREG1[[0..15]]
+
+reg4[[0..15]] = ct_tp_dst();
+    encodes as push:NXM_NX_XXREG1[[0..15]],set_field:0/0xffff->xxreg1,resubmit(,OFTABLE_CT_ORIG_TP_DST_LOAD),move:NXM_NX_XXREG1[[0..15]]->NXM_NX_XXREG1[[96..111]],pop:NXM_NX_XXREG1[[0..15]]
 
 reg1 = ct_tp_dst();
     Cannot use 32-bit field reg1[[0..31]] where 16-bit field is required.
@@ -2281,6 +2290,22 @@ ct_tp_dst;
 
 ct_tp_dst();
     Syntax error at `ct_tp_dst' expecting action.
+
+# ct_proto()
+reg1[[16..23]] = ct_proto();
+    encodes as push:NXM_NX_XXREG1[[0..7]],set_field:0/0xff->xxreg1,resubmit(,OFTABLE_CT_ORIG_PROTO_LOAD),move:NXM_NX_XXREG1[[0..7]]->NXM_NX_XXREG0[[80..87]],pop:NXM_NX_XXREG1[[0..7]]
+
+reg4[[0..7]] = ct_proto();
+    encodes as push:NXM_NX_XXREG1[[0..7]],set_field:0/0xff->xxreg1,resubmit(,OFTABLE_CT_ORIG_PROTO_LOAD),move:NXM_NX_XXREG1[[0..7]]->NXM_NX_XXREG1[[96..103]],pop:NXM_NX_XXREG1[[0..7]]
+
+reg1 = ct_proto();
+    Cannot use 32-bit field reg1[[0..31]] where 8-bit field is required.
+
+ct_proto;
+    Syntax error at `ct_proto' expecting action.
+
+ct_proto();
+    Syntax error at `ct_proto' expecting action.
 
 flood_remote;
     encodes as set_field:0x8000->reg6,resubmit(,OFTABLE_FLOOD_REMOTE_CHASSIS)
@@ -9211,7 +9236,7 @@ done
 # and addresses set by the user.
 check ovn-nbctl lsp-set-addresses p0 "0a:00:00:a8:01:17 192.168.1.2 192.168.1.12 192.168.1.14"
 check ovn-nbctl --wait=sb lsp-add sw0 p20 -- lsp-set-addresses p20 dynamic
-check_dynamic_addresses p20 "0a:00:00:a8:01:18 192.168.1.13"
+check_dynamic_addresses p20 "0a:00:00:a8:01:03 192.168.1.13"
 
 # Test for logical router port address management.
 check_uuid ovn-nbctl create Logical_Router name=R1
@@ -9220,12 +9245,12 @@ network="192.168.1.1/24" mac=\"0a:00:00:a8:01:19\" \
 -- add Logical_Router R1 ports @lrp -- lsp-add sw0 rp-sw0 \
 -- set Logical_Switch_Port rp-sw0 type=router options:router-port=sw0
 check ovn-nbctl --wait=sb lsp-add sw0 p21 -- lsp-set-addresses p21 dynamic
-check_dynamic_addresses p21 "0a:00:00:a8:01:1a 192.168.1.15"
+check_dynamic_addresses p21 "0a:00:00:a8:01:18 192.168.1.15"
 
 # Test for address reuse after logical port is deleted.
 check ovn-nbctl lsp-del p0
 check ovn-nbctl --wait=sb lsp-add sw0 p23 -- lsp-set-addresses p23 dynamic
-check_dynamic_addresses p23 "0a:00:00:a8:01:03 192.168.1.2"
+check_dynamic_addresses p23 "0a:00:00:a8:01:1a 192.168.1.2"
 
 # Test for multiple addresses to one logical port.
 check ovn-nbctl lsp-add sw0 p25 -- lsp-set-addresses p25 \
@@ -9285,19 +9310,19 @@ check_dynamic_addresses p33 "0a:00:00:a8:01:1f 192.168.1.22"
 check ovn-nbctl --wait=sb lsp-add sw0 p34 -- lsp-set-addresses p34 \
 "dynamic"
 # 192.168.1.51 should be assigned as 192.168.1.23-192.168.1.50 is excluded.
-check_dynamic_addresses p34 "0a:00:00:a8:01:34 192.168.1.51"
+check_dynamic_addresses p34 "0a:00:00:a8:01:20 192.168.1.51"
 
 # Now clear the exclude_ips list. 192.168.1.19 should be assigned.
 check ovn-nbctl --wait=sb set Logical-switch sw0 other_config:exclude_ips="invalid"
 check ovn-nbctl --wait=sb lsp-add sw0 p35 -- lsp-set-addresses p35 "dynamic"
-check_dynamic_addresses p35 "0a:00:00:a8:01:20 192.168.1.19"
+check_dynamic_addresses p35 "0a:00:00:a8:01:21 192.168.1.19"
 
 # Set invalid data in exclude_ips list. It should be ignored.
 check ovn-nbctl --wait=sb set Logical-switch sw0 other_config:exclude_ips="182.168.1.30"
 check ovn-nbctl --wait=sb lsp-add sw0 p36 -- lsp-set-addresses p36 \
 "dynamic"
 # 192.168.1.21 should be assigned as that's the next free one.
-check_dynamic_addresses p36 "0a:00:00:a8:01:21 192.168.1.21"
+check_dynamic_addresses p36 "0a:00:00:a8:01:22 192.168.1.21"
 
 # Clear the dynamic addresses assignment request.
 check ovn-nbctl --wait=sb clear logical_switch_port p36 addresses
@@ -9309,7 +9334,7 @@ check ovn-nbctl --wait=sb lsp-add sw0 p37 -- lsp-set-addresses p37 "dynamic"
 
 # With prefix aef0 and mac 0a:00:00:00:00:26, the dynamic IPv6 should be
 # - aef0::800:ff:fe00:26 (EUI64)
-check_dynamic_addresses p37 "0a:00:00:a8:01:21 192.168.1.21 aef0::800:ff:fea8:121"
+check_dynamic_addresses p37 "0a:00:00:a8:01:22 192.168.1.21 aef0::800:ff:fea8:122"
 
 check ovn-nbctl --wait=sb ls-add sw4
 check ovn-nbctl --wait=sb set Logical-switch sw4 other_config:ipv6_prefix="bef0::" \
@@ -9339,7 +9364,7 @@ check_dynamic_addresses p41 ''
 
 # Set a subnet. Now p41 should have an ipv4 address, too
 check ovn-nbctl --wait=sb add Logical-Switch sw5 other_config subnet=192.168.1.0/24
-check_dynamic_addresses p41 "0a:00:00:a8:01:22 192.168.1.2"
+check_dynamic_addresses p41 "0a:00:00:a8:01:23 192.168.1.2"
 
 # Clear the other_config. The IPv4 address should be gone
 check ovn-nbctl --wait=sb clear Logical-Switch sw5 other_config
@@ -9779,10 +9804,9 @@ as hv1 ovs-appctl netdev-dummy/receive hv1-ls1lp2 $packet
 # ARP packet should be received with Target IP Address set to 192.168.1.254 and
 # not 8.8.8.8
 
-$PYTHON "$ovs_srcdir/utilities/ovs-pcap.in" hv1/ls2lp2-tx.pcap | trim_zeros > packets
 expected="fffffffffffff0000000000208060001080006040001f00000000002c0a80101000000000000c0a801fe"
-echo $expected > expout
-AT_CHECK([cat packets], [0], [expout])
+echo $expected > expected
+OVN_CHECK_PACKETS([hv1/ls2lp2-tx.pcap], [expected])
 cat packets
 
 OVN_CLEANUP([hv1])
@@ -10240,6 +10264,9 @@ AT_CHECK([ovn-nbctl ls-add ls1])
 
 AS_BOX([requested tag for parent1])
 AT_CHECK([ovn-nbctl --wait=sb lsp-add ls1 c0 parent1 3])
+
+# Adding a container port w/ tag is done in two operations by northd.
+check ovn-nbctl --wait=sb sync
 c0_tag=$(ovn-nbctl lsp-get-tag c0)
 echo c0_tag=$c0_tag
 check test "$c0_tag" = 3
@@ -10248,6 +10275,9 @@ check_row_count Port_Binding 1 logical_port=c0 tag=$c0_tag
 
 AS_BOX([tag allocation 1 for parent1])
 AT_CHECK([ovn-nbctl --wait=sb lsp-add ls1 c1 parent1 0])
+
+# Adding a container port w/ tag is done in two operations by northd.
+check ovn-nbctl --wait=sb sync
 c1_tag=$(ovn-nbctl lsp-get-tag c1)
 echo c1_tag=$c1_tag
 check test "$c1_tag" != "$c0_tag"
@@ -10255,6 +10285,9 @@ check_row_count Port_Binding 1 logical_port=c1 tag=$c1_tag
 
 AS_BOX([tag allocation 2 for parent1])
 AT_CHECK([ovn-nbctl --wait=sb lsp-add ls1 c2 parent1 0])
+
+# Adding a container port w/ tag is done in two operations by northd.
+check ovn-nbctl --wait=sb sync
 c2_tag=$(ovn-nbctl lsp-get-tag c2)
 echo c2_tag=$c2_tag
 check test "$c2_tag" != "$c0_tag"
@@ -10263,6 +10296,9 @@ check_row_count Port_Binding 1 logical_port=c2 tag=$c2_tag
 
 AS_BOX([tag allocation 3 for parent1])
 AT_CHECK([ovn-nbctl --wait=sb lsp-add ls1 c3 parent1 0])
+
+# Adding a container port w/ tag is done in two operations by northd.
+check ovn-nbctl --wait=sb sync
 c3_tag=$(ovn-nbctl lsp-get-tag c3)
 echo c3_tag=$c3_tag
 check test "$c3_tag" != "$c0_tag"
@@ -10272,12 +10308,18 @@ check_row_count Port_Binding 1 logical_port=c3 tag=$c3_tag
 
 AS_BOX([tag allocation 1 for parent2])
 AT_CHECK([ovn-nbctl --wait=sb lsp-add ls1 c4 parent2 0])
+
+# Adding a container port w/ tag is done in two operations by northd.
+check ovn-nbctl --wait=sb sync
 c4_tag=$(ovn-nbctl lsp-get-tag c4)
 echo c4_tag=$c4_tag
 check_row_count Port_Binding 1 logical_port=c4 tag=$c4_tag
 
 AS_BOX([tag allocation 2 for parent2])
 AT_CHECK([ovn-nbctl --wait=sb lsp-add ls1 c5 parent2 0])
+
+# Adding a container port w/ tag is done in two operations by northd.
+check ovn-nbctl --wait=sb sync
 c5_tag=$(ovn-nbctl lsp-get-tag c5)
 echo c5_tag=$c5_tag
 check test "$c5_tag" != "$c4_tag"
@@ -10286,6 +10328,9 @@ check_row_count Port_Binding 1 logical_port=c5 tag=$c5_tag
 AS_BOX([delete and add tag allocation for parent1])
 AT_CHECK([ovn-nbctl --wait=sb lsp-del c1])
 AT_CHECK([ovn-nbctl --wait=sb lsp-add ls1 c6 parent1 0])
+
+# Adding a container port w/ tag is done in two operations by northd.
+check ovn-nbctl --wait=sb sync
 c6_tag=$(ovn-nbctl lsp-get-tag c6)
 echo c6_tag=$c6_tag
 check_row_count Port_Binding 1 logical_port=c6 tag=$c6_tag
@@ -15816,16 +15861,6 @@ echo $request >> hv3/third.expected
 
 check_packets
 
-# ct_zone allocation differs between I+P and recompute:
-# - In I+P an ovs interface with external-ids:iface-id set (but no
-#   logical_port in sb) results in no ct_zone allocated.
-# - In recompute, in the same case, a ct_zone is allocated - this is
-#   necessary to avoid flushing ct_zone if/when controller is restarted.
-# As migrrator has iface-id set on hv1 but is bound to hv2, we would hit
-# some ct-zone related differences in flows before and after recompute.
-# Avoid/hide this by removing iface-id on hv1.
-
-as hv1 check ovs-vsctl remove Interface migrator external-ids iface-id
 OVN_CLEANUP([hv1],[hv2],[hv3])
 
 AT_CLEANUP
@@ -15954,6 +15989,7 @@ wait_column "$hv1_uuid" Port_Binding requested_chassis logical_port=migrator
 wait_column "" Port_Binding additional_chassis logical_port=migrator
 wait_column "" Port_Binding requested_additional_chassis logical_port=migrator
 wait_for_ports_up
+check ovn-nbctl --wait=hv sync
 
 # advertise location of ports through localnet port
 send_garp hv1 migrator 2 "00:00:00:00:00:ff" "ff:ff:ff:ff:ff:ff" 10.0.0.100 10.0.0.100
@@ -16032,7 +16068,7 @@ check_packets
 reset_env
 
 # Start port migration hv1 -> hv2: both hypervisors are now bound
-check ovn-nbctl lsp-set-options migrator requested-chassis=hv1,hv2
+check ovn-nbctl --wait=hv lsp-set-options migrator requested-chassis=hv1,hv2
 wait_for_ports_up
 OVN_WAIT_PATCH_PORT_FLOWS(["public"], ["hv1"])
 OVN_WAIT_PATCH_PORT_FLOWS(["public"], ["hv2"])
@@ -16216,11 +16252,6 @@ echo $request >> hv2/n1.expected
 
 check_packets
 
-# ct_zone allocation differs between I+P and recompute.
-# As migrrator has iface-id set on hv1 but is bound to hv2, we would hit
-# some ct-zone related differences in flows before and after recompute.
-# Avoid/hide this by removing iface-id on hv1.
-as hv1 check ovs-vsctl remove Interface migrator external-ids iface-id
 OVN_CLEANUP([hv1],[hv2],[hv3])
 
 AT_CLEANUP
@@ -16776,12 +16807,6 @@ m4_define([ACTIVATION_STRATEGY_TEST],
     # complete port migration and check that -activated flag is reset
     check ovn-nbctl lsp-set-options migrator requested-chassis=hv2
     OVS_WAIT_UNTIL([test x = x$(ovn-sbctl get Port_Binding $pb_uuid options:additional-chassis-activated)])
-
-    # ct_zone allocation differs between I+P and recompute.
-    # As migrrator has iface-id set on hv1 but is bound to hv2, we would hit
-    # some ct-zone related differences in flows before and after recompute.
-    # Avoid/hide this by removing iface-id on hv1.
-    as hv1 check ovs-vsctl remove Interface migrator external-ids iface-id
 
     OVN_CLEANUP([hv1],[hv2],[hv3])
 
@@ -17736,6 +17761,7 @@ AT_CLEANUP
 
 OVN_FOR_EACH_NORTHD([
 AT_SETUP([IPv6 periodic gateway RA enabled for localnet adjacent switch ports])
+AT_SKIP_IF([test $HAVE_SCAPY = no])
 ovn_start
 
 net_add n1
@@ -21823,7 +21849,7 @@ echo $expected | ovstest test-ovn expr-to-packets > expected
 OVN_CHECK_PACKETS([hv2/vif1-tx.pcap], [expected])
 
 # Stop ovn-controller on hv2 with --restart flag
-OVN_CONTROLLER_EXIT([hv2])
+OVN_CONTROLLER_EXIT([hv2],[--restart])
 
 # Now send the packet again. This time, it should still arrive
 OVS_WAIT_UNTIL([as hv1 ovn-appctl -t ovn-controller inject-pkt "$packet"])
@@ -22206,7 +22232,7 @@ AT_CAPTURE_FILE([sbflows])
 AT_CHECK([as hv1 ovs-ofctl dump-flows br-int  \
 | grep "check_pkt_larger" | wc -l], [0], [[0
 ]])
-dp_uuid=$(ovn-sbctl find datapath_binding | grep sw0 -B2 | grep _uuid | \
+dp_uuid=$(ovn-sbctl find datapath_binding | grep lr0 -B2 | grep _uuid | \
 awk '{print $3}')
 check_uuid ovn-sbctl create MAC_Binding ip=172.168.0.3 datapath=$dp_uuid \
 logical_port=lr0-public mac="00\:00\:00\:12\:af\:11"
@@ -22277,7 +22303,7 @@ check ovn-nbctl lr-nat-add lr1 snat 172.168.0.100 10.0.0.0/24
 check ovn-nbctl lr-nat-add lr1 snat 2000::1 1000::/64
 check ovn-nbctl --wait=sb sync
 
-dp_uuid=$(ovn-sbctl find datapath_binding | grep sw0 -B2 | grep _uuid | \
+dp_uuid=$(ovn-sbctl find datapath_binding | grep lr1 -B2 | grep _uuid | \
 awk '{print $3}')
 check_uuid ovn-sbctl create MAC_Binding ip=172.168.0.3 datapath=$dp_uuid \
 logical_port=lr1-public mac="00\:00\:00\:12\:af\:11"
@@ -26712,14 +26738,14 @@ OVS_WAIT_FOR_OUTPUT(
    ovn-sbctl dump-flows sw0 | grep ct_lb_mark | grep priority=120 | sed 's/table=..//'], 0,
   [dnl
   (ls_in_pre_stateful ), priority=120  , match=(reg0[[2]] == 1 && ip4.dst == 10.0.0.10 && tcp.dst == 80), action=(reg4 = 10.0.0.10; reg2[[0..15]] = 80; ct_lb_mark;)
-  (ls_in_lb           ), priority=120  , match=(ct.new && ip4.dst == 10.0.0.10 && tcp.dst == 80), action=(reg4 = 10.0.0.10; reg2[[0..15]] = 80; ct_lb_mark(backends=10.0.0.3:80,20.0.0.3:80; hash_fields="ip_dst,ip_src,tcp_dst,tcp_src");)
+  (ls_in_lb           ), priority=120  , match=(ct.new && ip4.dst == 10.0.0.10 && reg1[[16..23]] == 6 && reg1[[0..15]] == 80), action=(reg4 = 10.0.0.10; reg2[[0..15]] = 80; ct_lb_mark(backends=10.0.0.3:80,20.0.0.3:80; hash_fields="ip_dst,ip_src,tcp_dst,tcp_src");)
 ])
 
 AT_CAPTURE_FILE([sbflows2])
 OVS_WAIT_FOR_OUTPUT(
   [ovn-sbctl dump-flows > sbflows2
    ovn-sbctl dump-flows lr0 | grep ct_lb_mark | grep priority=120 | sed 's/table=..//'], 0,
-  [  (lr_in_dnat         ), priority=120  , match=(ct.new && !ct.rel && ip4 && ip4.dst == 10.0.0.10 && tcp && tcp.dst == 80 && is_chassis_resident("cr-lr0-public")), action=(ct_lb_mark(backends=10.0.0.3:80,20.0.0.3:80; hash_fields="ip_dst,ip_src,tcp_dst,tcp_src");)
+  [  (lr_in_dnat         ), priority=120  , match=(ct.new && !ct.rel && ip4 && ip4.dst == 10.0.0.10 && reg1[[16..23]] == 6 && reg1[[0..15]] == 80 && is_chassis_resident("cr-lr0-public")), action=(ct_lb_mark(backends=10.0.0.3:80,20.0.0.3:80; hash_fields="ip_dst,ip_src,tcp_dst,tcp_src");)
 ])
 
 # get the svc monitor mac.
@@ -26753,16 +26779,16 @@ grep "405400000003${svc_mon_src_mac}" | wc -l`]
 AT_CAPTURE_FILE([sbflows3])
 ovn-sbctl dump-flows sw0 > sbflows3
 AT_CHECK(
-  [grep "ip4.dst == 10.0.0.10 && tcp.dst == 80" sbflows3 | grep priority=120 |\
+  [grep "ip4.dst == 10.0.0.10" sbflows3 | grep priority=120 |\
    ovn_strip_lflows], [0], [dnl
-  table=??(ls_in_lb           ), priority=120  , match=(ct.new && ip4.dst == 10.0.0.10 && tcp.dst == 80), action=(drop;)
+  table=??(ls_in_lb           ), priority=120  , match=(ct.new && ip4.dst == 10.0.0.10 && reg1[[16..23]] == 6 && reg1[[0..15]] == 80), action=(drop;)
   table=??(ls_in_pre_stateful ), priority=120  , match=(reg0[[2]] == 1 && ip4.dst == 10.0.0.10 && tcp.dst == 80), action=(reg4 = 10.0.0.10; reg2[[0..15]] = 80; ct_lb_mark;)
 ])
 
 AT_CAPTURE_FILE([sbflows4])
 ovn-sbctl dump-flows lr0 > sbflows4
 AT_CHECK([grep lr_in_dnat sbflows4 | grep priority=120 | sed 's/table=..//' | sort], [0], [dnl
-  (lr_in_dnat         ), priority=120  , match=(ct.new && !ct.rel && ip4 && ip4.dst == 10.0.0.10 && tcp && tcp.dst == 80 && is_chassis_resident("cr-lr0-public")), action=(drop;)
+  (lr_in_dnat         ), priority=120  , match=(ct.new && !ct.rel && ip4 && ip4.dst == 10.0.0.10 && reg1[[16..23]] == 6 && reg1[[0..15]] == 80 && is_chassis_resident("cr-lr0-public")), action=(drop;)
 ])
 
 # Delete sw0-p1
@@ -26918,14 +26944,14 @@ OVS_WAIT_FOR_OUTPUT(
    ovn-sbctl dump-flows sw0 | grep ct_lb_mark | grep priority=120 | sed 's/table=..//'], 0,
   [dnl
   (ls_in_pre_stateful ), priority=120  , match=(reg0[[2]] == 1 && ip6.dst == 2002::a && tcp.dst == 80), action=(xxreg1 = 2002::a; reg2[[0..15]] = 80; ct_lb_mark;)
-  (ls_in_lb           ), priority=120  , match=(ct.new && ip6.dst == 2002::a && tcp.dst == 80), action=(xxreg1 = 2002::a; reg2[[0..15]] = 80; ct_lb_mark(backends=[[2001::3]]:80,[[2002::3]]:80; hash_fields="ipv6_dst,ipv6_src,tcp_dst,tcp_src");)
+  (ls_in_lb           ), priority=120  , match=(ct.new && ip6.dst == 2002::a && reg1[[16..23]] == 6 && reg1[[0..15]] == 80), action=(xxreg1 = 2002::a; reg2[[0..15]] = 80; ct_lb_mark(backends=[[2001::3]]:80,[[2002::3]]:80; hash_fields="ipv6_dst,ipv6_src,tcp_dst,tcp_src");)
 ])
 
 AT_CAPTURE_FILE([sbflows2])
 OVS_WAIT_FOR_OUTPUT(
   [ovn-sbctl dump-flows > sbflows2
    ovn-sbctl dump-flows lr0 | grep ct_lb_mark | grep priority=120 | sed 's/table=..//'], 0,
-  [  (lr_in_dnat         ), priority=120  , match=(ct.new && !ct.rel && ip6 && ip6.dst == 2002::a && tcp && tcp.dst == 80 && is_chassis_resident("cr-lr0-public")), action=(ct_lb_mark(backends=[[2001::3]]:80,[[2002::3]]:80; hash_fields="ipv6_dst,ipv6_src,tcp_dst,tcp_src");)
+  [  (lr_in_dnat         ), priority=120  , match=(ct.new && !ct.rel && ip6 && ip6.dst == 2002::a && reg1[[16..23]] == 6 && reg1[[0..15]] == 80 && is_chassis_resident("cr-lr0-public")), action=(ct_lb_mark(backends=[[2001::3]]:80,[[2002::3]]:80; hash_fields="ipv6_dst,ipv6_src,tcp_dst,tcp_src");)
 ])
 
 # get the svc monitor mac.
@@ -26958,16 +26984,16 @@ grep "405400000003${svc_mon_src_mac}" | wc -l`]
 AT_CAPTURE_FILE([sbflows3])
 ovn-sbctl dump-flows sw0 > sbflows3
 AT_CHECK(
-  [grep "ip6.dst == 2002::a && tcp.dst == 80" sbflows3 | grep priority=120 |\
+  [grep "ip6.dst == 2002::a" sbflows3 | grep priority=120 |\
    ovn_strip_lflows], [0], [dnl
-  table=??(ls_in_lb           ), priority=120  , match=(ct.new && ip6.dst == 2002::a && tcp.dst == 80), action=(drop;)
+  table=??(ls_in_lb           ), priority=120  , match=(ct.new && ip6.dst == 2002::a && reg1[[16..23]] == 6 && reg1[[0..15]] == 80), action=(drop;)
   table=??(ls_in_pre_stateful ), priority=120  , match=(reg0[[2]] == 1 && ip6.dst == 2002::a && tcp.dst == 80), action=(xxreg1 = 2002::a; reg2[[0..15]] = 80; ct_lb_mark;)
 ])
 
 AT_CAPTURE_FILE([sbflows4])
 ovn-sbctl dump-flows lr0 > sbflows4
 AT_CHECK([grep lr_in_dnat sbflows4 | grep priority=120 | sed 's/table=..//' | sort], [0], [dnl
-  (lr_in_dnat         ), priority=120  , match=(ct.new && !ct.rel && ip6 && ip6.dst == 2002::a && tcp && tcp.dst == 80 && is_chassis_resident("cr-lr0-public")), action=(drop;)
+  (lr_in_dnat         ), priority=120  , match=(ct.new && !ct.rel && ip6 && ip6.dst == 2002::a && reg1[[16..23]] == 6 && reg1[[0..15]] == 80 && is_chassis_resident("cr-lr0-public")), action=(drop;)
 ])
 
 # Delete sw0-p1
@@ -30855,7 +30881,7 @@ check test "$hvt2" -gt 0
 # Kill ovn-controller on chassis hv3, so that it won't update nb_cfg.
 # Then wait for 9 out of 10
 sleep 1
-OVN_CONTROLLER_EXIT([hv3])
+OVN_CONTROLLER_EXIT([hv3],[--restart])
 wait_for_ports_up
 check ovn-nbctl --wait=sb sync
 wait_row_count Chassis_Private 9 name!=hv3 nb_cfg=2
@@ -31115,6 +31141,7 @@ OVS_WAIT_UNTIL([
     cr_lr0_public_ch=$(ovn-sbctl --bare --columns chassis list port_binding cr-lr0-public)
     test "$cr_lr0_public_ch" = $hv3_uuid
 ])
+check ovn-nbctl --wait=hv sync
 
 test_arp_response 000020201213 $(ip_to_hex 172 16 0 100) hv3 hv1 hv2
 test_arp_response 000020201213 $(ip_to_hex 172 16 0 101) hv3 hv1 hv2
@@ -31128,6 +31155,7 @@ OVS_WAIT_UNTIL([
     gw_router_ch=$(ovn-sbctl --bare --columns chassis list port_binding gw_router-public)
     test "$gw_router_ch" = $hv1_uuid
 ])
+check ovn-nbctl --wait=hv sync
 
 # Send ARP request for the IP which belongs to gw_router
 test_arp_response 000030303233 $(ip_to_hex 172 16 0 200) hv1 hv2 hv3
@@ -35301,7 +35329,6 @@ OVS_WAIT_UNTIL([
     test x430 = x$(as hv1 ovs-vsctl get Interface ${iface1_uuid} mtu_request)
 ])
 
-as hv1 check ovn-appctl -t ovn-controller debug/ignore-startup-delay
 # Check that pointing requested-chassis somewhere else will unplug the port
 check ovn-nbctl --wait=hv set Logical_Switch_Port lsp1 \
     options:requested-chassis=non-existent-chassis
@@ -35309,7 +35336,6 @@ OVS_WAIT_UNTIL([
     ! as hv1 ovs-vsctl get Interface ${iface1_uuid} _uuid
 ])
 
-as hv2 check ovn-appctl -t ovn-controller debug/ignore-startup-delay
 # Check that removing an lport will unplug it
 AT_CHECK([test x${iface2_uuid} = x$(as hv2 ovs-vsctl get Interface ${iface2_uuid} _uuid)], [0], [])
 check ovn-nbctl --wait=hv lsp-del ${lsp2_uuid}
@@ -36725,15 +36751,6 @@ send_icmp6_echo_req() {
     as $hv ovs-appctl netdev-dummy/receive $dev $packet
 }
 
-send_na() {
-    local hv=$1 dev=$2 hdst=$3 hsrc=$4 idst=$5 isrc=$6
-    local packet=$(fmt_pkt "Ether(dst='${hdst}', src='${hsrc}')/ \
-                            IPv6(dst='${idst}', src='${isrc}')/ \
-                            ICMPv6ND_NA(tgt='${isrc}')/ \
-                            ICMPv6NDOptDstLLAddr(lladdr='${hsrc}')")
-    as $hv ovs-appctl netdev-dummy/receive $dev $packet
-}
-
 dump_icmp() {
     local hdst=$1 hsrc=$2 idst=$3 isrc=$4 ttl=$5 type=$6 chksum=$7
     local packet=$(fmt_pkt "Ether(dst='${hdst}', src='${hsrc}')/ \
@@ -36801,7 +36818,6 @@ dump_icmp 00:00:00:00:10:1a 00:00:00:00:10:00 192.168.10.100 192.168.20.2 253 0 
 OVN_CHECK_PACKETS_CONTAIN([hv1/public-tx.pcap], [expected])
 
 wait_row_count mac_binding 1 ip="192.168.20.2" logical_port="gw-join"
-n_arp=$(ovs-ofctl dump-flows br-int table=OFTABLE_MAC_CACHE_USE |awk '/arp_spa=192.168.20.2/{print substr($4,11,1)}')
 
 OVS_WAIT_UNTIL([$(ovs-ofctl dump-flows br-int table=OFTABLE_MAC_BINDING | \
                   sed 's/reg15=0x.,metadata=0x./reg15=<cleared>,metadata=<cleared>/g' | \
@@ -36830,7 +36846,6 @@ check ovn-nbctl --wait=hv acl-del join
 wait_row_count mac_binding 0
 
 send_icmp6_echo_req hv1 public 00:00:00:00:10:00 00:00:00:00:50:01 fd12::2 fd11::64
-send_na hv1 vif1 00:00:00:00:10:00 00:00:00:00:50:01 fd11::1 fd11::64
 check_row_count mac_binding 1 mac=\"00:00:00:00:30:00\" ip=\"fd12::2\"
 
 n_ipv6=$(ovs-ofctl dump-flows br-int table=OFTABLE_MAC_CACHE_USE |awk '/ipv6_src=fd12::2/{print substr($4,11,1)}')
@@ -37346,10 +37361,10 @@ check_default_flows() {
         # Tables OFTABLE_CHK_LB_HAIRPIN and OFTABLE_CT_SNAT_HAIRPIN are part
         # of the chk_lb_hairpin and ct_snat_to_vip actions respectively and
         # it's OK if they don't have a default action.
-        # Tables OFTABLE_CT_ORIG_NW_DST_LOAD, OFTABLE_CT_ORIG_IP6_DST_LOAD and
-        # OFTABLE_CT_ORIG_TP_DST_LOAD are part of ct_nw_dst(), ct_ip6_dst()
-        # and ct_tp_dst() actions respectively and it's OK for them to not
-        # have default flows.
+        # Tables OFTABLE_CT_ORIG_NW_DST_LOAD, OFTABLE_CT_ORIG_IP6_DST_LOAD,
+        # OFTABLE_CT_ORIG_TP_DST_LOAD and OFTABLE_CT_ORIG_PROTO_LOAD are part
+        # of ct_nw_dst(), ct_ip6_dst(), ct_tp_dst() and ct_proto() actions
+        # respectively and it's OK for them to not have default flows.
         # Table OFTABLE_FLOOD_REMOTE_CHASSIS is part of flood_remote action
         # and it's OK for it to not have default flows.
         # Table OFTABLE_CT_STATE_SAVE is the implementation of the
@@ -37360,6 +37375,7 @@ check_default_flows() {
             OFTABLE_CT_ORIG_NW_DST_LOAD  | \
             OFTABLE_CT_ORIG_IP6_DST_LOAD | \
             OFTABLE_CT_ORIG_TP_DST_LOAD  | \
+            OFTABLE_CT_ORIG_PROTO_LOAD   | \
             OFTABLE_FLOOD_REMOTE_CHASSIS | \
             OFTABLE_CT_STATE_SAVE)
                 continue ;;
@@ -38073,9 +38089,6 @@ ovs-vsctl -- add-port br-phys-2 fake-phys-2-to-int-2 -- \
 
 ovn_attach n1 br-phys 192.168.1.1 24
 
-# allow controller to immediately clean patch ports up
-check ovn-appctl -t ovn-controller debug/ignore-startup-delay
-
 # check that patch port on br-int is cleaned up (and also its peer)
 OVS_WAIT_UNTIL([
     test 0 = $(ovs-vsctl --columns _uuid --bare find Port name=fake-int-to-phys | wc -l)
@@ -38140,9 +38153,6 @@ check ovn-nbctl lsp-set-type ln_port localnet
 check ovn-nbctl lsp-set-options ln_port network_name=phys-1
 wait_for_ports_up
 check ovn-nbctl --wait=hv sync
-
-# Allow controller to immediately clean patch ports up if any.
-check ovn-appctl -t ovn-controller debug/ignore-startup-delay
 
 # check that patch port created on br-int and br-phys-1.
 OVS_WAIT_UNTIL([
@@ -38435,7 +38445,7 @@ check_tunnel_port hv1 br-int hv2@192.168.0.2%192.168.0.1
 check_tunnel_port hv2 br-int hv1@192.168.0.1%192.168.0.2
 
 # Stop ovn-controller on hv1
-OVN_CONTROLLER_EXIT([hv1])
+OVN_CONTROLLER_EXIT([hv1],[--restart])
 
 # The tunnel should remain intact
 check_tunnel_port hv1 br-int hv2@192.168.0.2%192.168.0.1
@@ -38464,7 +38474,7 @@ check_tunnel_port hv2 br-int1 hv1@192.168.0.1%192.168.0.2
 check grep -q "Clearing old tunnel port \"ovn-hv1-0\" (hv1@192.168.0.1%192.168.0.2) from bridge \"br-int\"" hv2/ovn-controller.log
 
 # Stop ovn-controller on hv1
-OVN_CONTROLLER_EXIT([hv1])
+OVN_CONTROLLER_EXIT([hv1],[--restart])
 
 # The tunnel should remain intact
 check_tunnel_port hv1 br-int1 hv2@192.168.0.2%192.168.0.1
@@ -38554,7 +38564,7 @@ prev_id2=$(ovs-vsctl --bare --columns _uuid find port external_ids:ovn-chassis-i
 # The hv2 is running we can remove the override file
 rm -f ${OVN_SYSCONFDIR}/system-id-override
 
-OVN_CONTROLLER_EXIT([hv1])
+OVN_CONTROLLER_EXIT([hv1],[--restart])
 
 # for some reason SSL/TLS ovsdb configuration overrides CLI, so
 # delete ssl config from ovsdb to give CLI arguments priority
@@ -39354,7 +39364,7 @@ AT_CHECK([grep -c "NXT_CT_FLUSH_ZONE" hv1/ovs-vswitchd.log], [0], [dnl
 ])
 
 AS_BOX([Check conversion from UUID - restart])
-OVN_CONTROLLER_EXIT([hv1])
+OVN_CONTROLLER_EXIT([hv1],[--restart])
 
 replace_with_uuid lr0
 replace_with_uuid sw0
@@ -39450,6 +39460,7 @@ AT_CLEANUP
 OVN_FOR_EACH_NORTHD([
 AT_SETUP([virtual port claim race condition])
 AT_KEYWORDS([virtual ports])
+AT_SKIP_IF([test $HAVE_SCAPY = no])
 ovn_start
 
 net_add n1
@@ -41123,6 +41134,157 @@ OVN_CHECK_PACKETS([hv/vif1-tx.pcap], [expected-vif1])
 AT_CLEANUP
 ])
 
+dnl This test checks that the megaflows translated by ovs-vswitchd don't
+dnl have extensive matches on external IP addresses for simple routing.
+OVN_FOR_EACH_NORTHD([
+AT_SETUP([IPv4/v6 routing to external - megaflow check for src/dst matches])
+AT_SKIP_IF([test $HAVE_SCAPY = no])
+ovn_start
+
+check ovn-nbctl ls-add sw0
+
+check ovn-nbctl lsp-add sw0 vm0
+check ovn-nbctl lsp-set-addresses vm0 "f0:00:0f:01:02:03 10.0.0.3 1000::3"
+
+check ovn-nbctl ls-add sw1
+
+check ovn-nbctl lsp-add sw1 ext
+check ovn-nbctl lsp-set-addresses ext unknown
+check ovn-nbctl lsp-set-type ext localnet
+check ovn-nbctl lsp-set-options ext network_name=phys
+
+check ovn-nbctl lr-add lr0
+
+check ovn-nbctl lrp-add lr0 lr0-sw0 fa:16:3e:00:00:01 10.0.0.250/24 1000::f0/64
+check ovn-nbctl lsp-add sw0 sw0-lr0
+check ovn-nbctl lsp-set-type sw0-lr0 router
+check ovn-nbctl lsp-set-addresses sw0-lr0 router
+check ovn-nbctl lsp-set-options sw0-lr0 router-port=lr0-sw0
+
+check ovn-nbctl lrp-add lr0 lr0-sw1 fa:16:3e:00:00:02 20.0.0.250/24 2000::f0/64
+check ovn-nbctl lsp-add sw1 sw1-lr0
+check ovn-nbctl lsp-set-type sw1-lr0 router
+check ovn-nbctl lsp-set-addresses sw1-lr0 router
+check ovn-nbctl lsp-set-options sw1-lr0 router-port=lr0-sw1
+
+dnl Add default routes for the external gateway.
+check ovn-nbctl lr-route-add lr0 "0.0.0.0/0" 20.0.0.254 lr0-sw1
+check ovn-nbctl lr-route-add lr0 "::/0" 2000::fe lr0-sw1
+
+net_add n1
+sim_add hv
+as hv
+check ovs-vsctl add-br br-phys
+ovn_attach n1 br-phys 192.168.0.1
+check ovs-vsctl set open . external-ids:ovn-bridge-mappings=phys:br-phys
+check ovs-vsctl add-port br-int vif1 -- \
+    set Interface vif1 external-ids:iface-id=vm0 \
+    options:tx_pcap=hv/vif1-tx.pcap \
+    options:rxq_pcap=hv/vif1-rx.pcap \
+    ofport-request=1
+
+check ovn-nbctl --wait=sb sync
+wait_for_ports_up
+
+dnl Create MAC binding entries for the external gateway, so OVN doesn't need
+dnl to ARP/ND for it.
+lr0_dp=$(fetch_column Datapath_Binding _uuid external_ids:name=lr0)
+check_uuid ovn-sbctl create mac_binding datapath=$lr0_dp logical_port=lr0-sw1 \
+    ip=\"2000::fe\" mac=\"f0:00:0f:01:02:fe\"
+check_uuid ovn-sbctl create mac_binding datapath=$lr0_dp logical_port=lr0-sw1 \
+    ip=\"20.0.0.254\" mac=\"f0:00:0f:01:02:fe\"
+check ovn-nbctl --wait=hv sync
+
+AS_BOX([IPv6 - from external to vm0])
+packet=$(fmt_pkt "Ether(dst='fa:16:3e:00:00:02', src='f0:00:0f:01:02:fe')/ \
+                  IPv6(dst='1000::3', src='3000::4', hlim=64)/ \
+                  UDP(sport=53, dport=4369)")
+as hv
+ovs-appctl ofproto/trace br-phys in_port=br-phys_n1 $packet --names > ext_ip6_ofproto_trace.txt
+check ovs-appctl netdev-dummy/receive br-phys_n1 $packet
+
+AT_CAPTURE_FILE([ext_ip6_ofproto_trace.txt])
+
+dnl Make sure the datapath flow doesn't match on a full external address.
+AT_CHECK([grep Megaflow ext_ip6_ofproto_trace.txt], [0], [stdout])
+AT_CHECK([grep Megaflow ext_ip6_ofproto_trace.txt | grep -q '3000::4'], [1])
+
+dnl Make sure that the packet was received by vm0.  The L2 addresses and the
+dnl hop limit will be different since the packet was routed.
+packet=$(fmt_pkt "Ether(dst='f0:00:0f:01:02:03', src='fa:16:3e:00:00:01')/ \
+                  IPv6(dst='1000::3', src='3000::4', hlim=63)/ \
+                  UDP(sport=53, dport=4369)")
+echo $packet >> expected-vif1
+OVN_CHECK_PACKETS([hv/vif1-tx.pcap], [expected-vif1])
+
+AS_BOX([IPv6 - from vm0 to external])
+packet=$(fmt_pkt "Ether(dst='fa:16:3e:00:00:01', src='f0:00:0f:01:02:03')/ \
+                  IPv6(dst='3000::4', src='1000::3', hlim=64)/ \
+                  UDP(sport=53, dport=4369)")
+as hv
+ovs-appctl ofproto/trace br-int in_port=vif1 $packet --names > vm0_ip6_ofproto_trace.txt
+check ovs-appctl netdev-dummy/receive vif1 $packet
+
+AT_CAPTURE_FILE([vm0_ip6_ofproto_trace.txt])
+
+dnl Make sure the datapath flow doesn't match on a full external address.
+AT_CHECK([grep Megaflow vm0_ip6_ofproto_trace.txt], [0], [stdout])
+AT_CHECK([grep Megaflow vm0_ip6_ofproto_trace.txt | grep -q '3000::4'], [1])
+
+dnl Make sure that the packet was received externally.  The L2 addresses and
+dnl the hop limit will be different since the packet was routed.
+packet=$(fmt_pkt "Ether(dst='f0:00:0f:01:02:fe', src='fa:16:3e:00:00:02')/ \
+                  IPv6(dst='3000::4', src='1000::3', hlim=63)/ \
+                  UDP(sport=53, dport=4369)")
+echo $packet >> expected-ext
+OVN_CHECK_PACKETS([hv/br-phys_n1-tx.pcap], [expected-ext])
+
+AS_BOX([IPv4 - from external to vm0])
+packet=$(fmt_pkt "Ether(dst='fa:16:3e:00:00:02', src='f0:00:0f:01:02:fe')/ \
+                  IP(dst='10.0.0.3', src='30.0.0.4', ttl=64)/ \
+                  UDP(sport=53, dport=4369)")
+as hv
+ovs-appctl ofproto/trace br-phys in_port=br-phys_n1 $packet --names > ext_ip4_ofproto_trace.txt
+check ovs-appctl netdev-dummy/receive br-phys_n1 $packet
+
+AT_CAPTURE_FILE([ext_ip4_ofproto_trace.txt])
+
+dnl Make sure the datapath flow doesn't match on a full external address.
+AT_CHECK([grep Megaflow ext_ip4_ofproto_trace.txt], [0], [stdout])
+AT_CHECK([grep Megaflow ext_ip4_ofproto_trace.txt | grep -q '30.0.0.4'], [1])
+
+dnl Make sure that the packet was received by vm0.  The L2 addresses and the
+dnl hop limit will be different since the packet was routed.
+packet=$(fmt_pkt "Ether(dst='f0:00:0f:01:02:03', src='fa:16:3e:00:00:01')/ \
+                  IP(dst='10.0.0.3', src='30.0.0.4', ttl=63)/ \
+                  UDP(sport=53, dport=4369)")
+echo $packet >> expected-vif1
+OVN_CHECK_PACKETS([hv/vif1-tx.pcap], [expected-vif1])
+
+AS_BOX([IPv4 - from vm0 to external])
+packet=$(fmt_pkt "Ether(dst='fa:16:3e:00:00:01', src='f0:00:0f:01:02:03')/ \
+                  IP(dst='30.0.0.4', src='10.0.0.3', ttl=64)/ \
+                  UDP(sport=53, dport=4369)")
+as hv
+ovs-appctl ofproto/trace br-int in_port=vif1 $packet --names > vm0_ip4_ofproto_trace.txt
+check ovs-appctl netdev-dummy/receive vif1 $packet
+
+AT_CAPTURE_FILE([vm0_ip4_ofproto_trace.txt])
+
+dnl Make sure the datapath flow doesn't match on a full external address.
+AT_CHECK([grep Megaflow vm0_ip4_ofproto_trace.txt], [0], [stdout])
+AT_CHECK([grep Megaflow vm0_ip4_ofproto_trace.txt | grep -q '30.0.0.4'], [1])
+
+dnl Make sure that the packet was received externally.  The L2 addresses and
+dnl the hop limit will be different since the packet was routed.
+packet=$(fmt_pkt "Ether(dst='f0:00:0f:01:02:fe', src='fa:16:3e:00:00:02')/ \
+                  IP(dst='30.0.0.4', src='10.0.0.3', ttl=63)/ \
+                  UDP(sport=53, dport=4369)")
+echo $packet >> expected-ext
+OVN_CHECK_PACKETS([hv/br-phys_n1-tx.pcap], [expected-ext])
+
+AT_CLEANUP
+])
 
 OVN_FOR_EACH_NORTHD([
 AT_SETUP([Multichassis port I-P processing])
@@ -41406,8 +41568,6 @@ check ovn-nbctl ls-add sw0
 check ovn-nbctl lsp-add sw0 sw0p1
 
 check ovn-nbctl --wait=hv sync
-
-check ovn-appctl -t ovn-controller debug/ignore-startup-delay
 
 # Waits until the OVS database contains exactly the specified patch ports.
 # Each argument should be of the form BRIDGE PORT PEER.
@@ -43236,6 +43396,7 @@ AT_CLEANUP
 OVN_FOR_EACH_NORTHD([
 AT_SETUP([Load balancer hairpin flows])
 AT_KEYWORDS([lb])
+AT_SKIP_IF([test $HAVE_SCAPY = no])
 ovn_start
 
 net_add n1
@@ -43397,6 +43558,7 @@ AT_CLEANUP
 OVN_FOR_EACH_NORTHD([
 AT_SETUP([virtual port claim postpone])
 AT_KEYWORDS([virtual ports])
+AT_SKIP_IF([test $HAVE_SCAPY = no])
 ovn_start
 
 net_add n1

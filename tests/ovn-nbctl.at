@@ -304,7 +304,49 @@ dnl Test when same name exists in logical switches and portgroups
 AT_CHECK([ovn-nbctl create port_group name=ls0], [0], [ignore])
 AT_CHECK([ovn-nbctl acl-add ls0 to-lport 100 ip drop], [1], [], [stderr])
 AT_CHECK([grep 'exists in both' stderr], [0], [ignore])
-AT_CHECK([ovn-nbctl --type=port-group acl-add ls0 to-lport 100 ip drop], [0], [ignore])])
+AT_CHECK([ovn-nbctl --type=port-group acl-add ls0 to-lport 100 ip drop], [0], [ignore])
+
+dnl Test using --all option to show port group acls for a logical switch.
+check ovn-nbctl ls-del ls1
+check ovn-nbctl ls-add ls1
+check ovn-nbctl lsp-add ls1 lp0
+check ovn-nbctl lsp-add ls1 lp1
+check ovn-nbctl lsp-add ls1 lp2
+check ovn-nbctl pg-del pg0
+check ovn-nbctl pg-add pg0
+check ovn-nbctl pg-set-ports pg0 lp0
+check ovn-nbctl pg-add pg1
+check ovn-nbctl pg-set-ports pg1 lp1
+check ovn-nbctl pg-add pg2
+check ovn-nbctl pg-set-ports pg2 lp0 lp2 lp1
+check ovn-nbctl --type=switch acl-add ls1 to-lport 100 ip drop
+check ovn-nbctl --type=switch acl-add ls1 from-lport 500 ip drop
+check ovn-nbctl --type=port-group acl-add pg0 to-lport 144 ip drop
+check ovn-nbctl --type=port-group acl-add pg0 to-lport 11 ip drop
+check ovn-nbctl --type=port-group acl-add pg1 to-lport 12 ip drop
+check ovn-nbctl --type=port-group acl-add pg2 to-lport 99 ip drop
+check ovn-nbctl --type=port-group acl-add pg2 from-lport 100 ip drop
+check ovn-nbctl --type=port-group acl-add pg2 from-lport 98 ip drop
+
+AT_CHECK([ovn-nbctl --all acl-list ls1], [0], [dnl
+from-lport   500 (ip) drop
+  to-lport   100 (ip) drop
+  to-lport   144 (ip) drop [[pg0]]
+  to-lport    11 (ip) drop [[pg0]]
+  to-lport    12 (ip) drop [[pg1]]
+from-lport   100 (ip) drop [[pg2]]
+from-lport    98 (ip) drop [[pg2]]
+  to-lport    99 (ip) drop [[pg2]]
+])
+
+check ovn-nbctl acl-del ls1
+check ovn-nbctl acl-del pg0
+check ovn-nbctl acl-del pg1
+check ovn-nbctl acl-del pg2
+check ovn-nbctl pg-del pg0
+check ovn-nbctl pg-del pg1
+check ovn-nbctl pg-del pg2
+check ovn-nbctl ls-del ls1])
 
 dnl ---------------------------------------------------------------------
 
@@ -1916,7 +1958,21 @@ AT_CHECK([ovn-nbctl lrp-get-gateway-chassis lrp0], [0], [dnl
 lrp0-chassis2    10
 lrp0-chassis3     5
 lrp0-chassis1     1
-])])
+])
+gc_uuid=$(ovn-nbctl --bare --colum _uuid find gateway_chassis name='lrp0-chassis1')
+AT_CHECK([ovn-nbctl set gateway_chassis $gc_uuid name='lrp0_chassis1'])
+AT_CHECK([ovn-nbctl lrp-get-gateway-chassis lrp0], [0], [dnl
+lrp0-chassis2    10
+lrp0-chassis3     5
+lrp0_chassis1     1
+])
+AT_CHECK([ovn-nbctl lrp-set-gateway-chassis lrp0 chassis1 2])
+AT_CHECK([ovn-nbctl lrp-get-gateway-chassis lrp0], [0], [dnl
+lrp0-chassis2    10
+lrp0-chassis3     5
+lrp0_chassis1     2
+])
+])
 
 dnl ---------------------------------------------------------------------
 
@@ -2791,22 +2847,27 @@ SW1P1=$(ovn-nbctl --bare --columns=_uuid list logical_switch_port sw1-p1)
 AT_CHECK([ovn-nbctl lsp-add sw1 sw1-p2], [0], [ignore])
 SW1P2=$(ovn-nbctl --bare --columns=_uuid list logical_switch_port sw1-p2)
 
-AT_CHECK([ovn-nbctl pg-add pg1 sw1-p1], [0], [ignore])
+AT_CHECK([ovn-nbctl pg-add pg1 sw1-p1 sw1-p2], [0], [ignore])
 AT_CHECK([ovn-nbctl --bare --columns=name list port_group pg1], [0],[dnl
 pg1
 ])
-AT_CHECK_UNQUOTED([ovn-nbctl --bare --columns=ports list port_group pg1], [0], [dnl
-$SW1P1
+AT_CHECK([ovn-nbctl pg-get-ports pg1],[0], [dnl
+sw1-p1 sw1-p2
 ])
 
 AT_CHECK([ovn-nbctl pg-set-ports pg1 sw1-p2], [0], [ignore])
 AT_CHECK_UNQUOTED([ovn-nbctl --bare --columns=ports list port_group pg1], [0], [dnl
 $SW1P2
 ])
+AT_CHECK([ovn-nbctl pg-get-ports pg1],[0], [dnl
+sw1-p2
+])
 
 AT_CHECK([ovn-nbctl pg-del pg1], [0], [ignore])
 AT_CHECK([ovn-nbctl list port_group], [0], [])
-])
+AT_CHECK([ovn-nbctl pg-get-ports pg1], [1], [],
+  [ovn-nbctl: pg1: port group name not found
+])])
 dnl ---------------------------------------------------------------------
 
 OVN_NBCTL_TEST([ovn_nbctl_fwd_groups], [fwd groups], [

@@ -137,7 +137,8 @@ sb_sync_learned_routes(const struct vector *learned_routes,
                        const struct smap *bound_ports,
                        struct ovsdb_idl_txn *ovnsb_idl_txn,
                        struct ovsdb_idl_index *sbrec_port_binding_by_name,
-                       struct ovsdb_idl_index *sbrec_learned_route_by_datapath)
+                       struct ovsdb_idl_index *sbrec_learned_route_by_datapath,
+                       bool *sb_changes_pending)
 {
     struct hmap sync_routes = HMAP_INITIALIZER(&sync_routes);
     const struct sbrec_learned_route *sb_route;
@@ -186,6 +187,10 @@ sb_sync_learned_routes(const struct vector *learned_routes,
                 hmap_remove(&sync_routes, &route_e->hmap_node);
                 free(route_e);
             } else {
+                if (!ovnsb_idl_txn) {
+                    *sb_changes_pending = true;
+                    continue;
+                }
                 sb_route = sbrec_learned_route_insert(ovnsb_idl_txn);
                 sbrec_learned_route_set_datapath(sb_route, datapath);
                 sbrec_learned_route_set_logical_port(sb_route, logical_port);
@@ -204,6 +209,21 @@ sb_sync_learned_routes(const struct vector *learned_routes,
     hmap_destroy(&sync_routes);
 }
 
+/* Last route_exchange netlink operation. */
+static int route_exchange_nl_status;
+
+#define CLEAR_ROUTE_EXCHANGE_NL_STATUS() \
+    do {                                 \
+        route_exchange_nl_status = 0;    \
+    } while (0)
+
+#define SET_ROUTE_EXCHANGE_NL_STATUS(error)     \
+    do {                                        \
+        if (!route_exchange_nl_status) {        \
+            route_exchange_nl_status = (error); \
+        }                                       \
+    } while (0)
+
 void
 route_exchange_run(const struct route_exchange_ctx_in *r_ctx_in,
                    struct route_exchange_ctx_out *r_ctx_out)
@@ -213,20 +233,23 @@ route_exchange_run(const struct route_exchange_ctx_in *r_ctx_in,
     struct hmap old_maintained_route_table =
         HMAP_INITIALIZER(&old_maintained_route_table);
     hmap_swap(&_maintained_route_tables, &old_maintained_route_table);
+    int error;
 
+    CLEAR_ROUTE_EXCHANGE_NL_STATUS();
     const struct advertise_datapath_entry *ad;
     HMAP_FOR_EACH (ad, node, r_ctx_in->announce_routes) {
         uint32_t table_id = ad->db->tunnel_key;
 
         if (ad->maintain_vrf) {
             if (!sset_contains(&old_maintained_vrfs, ad->vrf_name)) {
-                int error = re_nl_create_vrf(ad->vrf_name, table_id);
+                error = re_nl_create_vrf(ad->vrf_name, table_id);
                 if (error && error != EEXIST) {
                     VLOG_WARN_RL(&rl,
                                  "Unable to create VRF %s for datapath "
                                  "%"PRIi32": %s.",
                                  ad->vrf_name, table_id,
                                  ovs_strerror(error));
+                    SET_ROUTE_EXCHANGE_NL_STATUS(error);
                     continue;
                 }
             }
@@ -243,13 +266,15 @@ route_exchange_run(const struct route_exchange_ctx_in *r_ctx_in,
         struct vector received_routes =
             VECTOR_EMPTY_INITIALIZER(struct re_nl_received_route_node);
 
-        re_nl_sync_routes(ad->db->tunnel_key, &ad->routes,
-                          &received_routes, ad->db);
+        error = re_nl_sync_routes(ad->db->tunnel_key, &ad->routes,
+                                  &received_routes, ad->db);
+        SET_ROUTE_EXCHANGE_NL_STATUS(error);
 
         sb_sync_learned_routes(&received_routes, ad->db,
                                &ad->bound_ports, r_ctx_in->ovnsb_idl_txn,
                                r_ctx_in->sbrec_port_binding_by_name,
-                               r_ctx_in->sbrec_learned_route_by_datapath);
+                               r_ctx_in->sbrec_learned_route_by_datapath,
+                               &r_ctx_out->sb_changes_pending);
 
         route_table_add_watch_request(&r_ctx_out->route_table_watches,
                                       table_id);
@@ -261,7 +286,12 @@ route_exchange_run(const struct route_exchange_ctx_in *r_ctx_in,
     struct maintained_route_table_entry *mrt;
     HMAP_FOR_EACH_POP (mrt, node, &old_maintained_route_table) {
         if (!maintained_route_table_contains(mrt->table_id)) {
-            re_nl_cleanup_routes(mrt->table_id);
+            error = re_nl_cleanup_routes(mrt->table_id);
+            if (error) {
+                /* If netlink transaction fails, we will retry next time. */
+                maintained_route_table_add(mrt->table_id);
+                SET_ROUTE_EXCHANGE_NL_STATUS(error);
+            }
         }
         free(mrt);
     }
@@ -271,7 +301,12 @@ route_exchange_run(const struct route_exchange_ctx_in *r_ctx_in,
     const char *vrf_name;
     SSET_FOR_EACH_SAFE (vrf_name, &old_maintained_vrfs) {
         if (!sset_contains(&_maintained_vrfs, vrf_name)) {
-            re_nl_delete_vrf(vrf_name);
+            error = re_nl_delete_vrf(vrf_name);
+            if (error && error != ENODEV) {
+                /* If netlink transaction fails, we will retry next time. */
+                sset_add(&_maintained_vrfs, vrf_name);
+                SET_ROUTE_EXCHANGE_NL_STATUS(error);
+            }
         }
         sset_delete(&old_maintained_vrfs, SSET_NODE_FROM_NAME(vrf_name));
     }
@@ -307,4 +342,10 @@ route_exchange_destroy(void)
 
     sset_destroy(&_maintained_vrfs);
     hmap_destroy(&_maintained_route_tables);
+}
+
+int
+route_exchange_status_run(void)
+{
+    return route_exchange_nl_status;
 }

@@ -897,8 +897,12 @@ ip_address_and_port_from_lb_key(const char *key, char **ip_address,
  * modified or a stage is added to a logical pipeline.
  *
  * This value is also used to handle some backward compatibility during
- * upgrading. It should never decrease or rewind. */
-#define OVN_INTERNAL_MINOR_VER 8
+ * upgrading. It should never decrease or rewind.
+ *
+ * NOTE: If OVN_NORTHD_PIPELINE_CSUM is updated make sure to double check
+ * whether an update of OVN_INTERNAL_MINOR_VER is required. */
+#define OVN_NORTHD_PIPELINE_CSUM "1158333617 10744"
+#define OVN_INTERNAL_MINOR_VER 9
 
 /* Returns the OVN version. The caller must free the returned value. */
 char *
@@ -933,13 +937,24 @@ get_bridge(const struct ovsrec_bridge_table *bridge_table, const char *br_name)
     return NULL;
 }
 
+/* This counts the amount of iterations of monitoring condition updates and
+ * their respective update towards us.
+ * This only needs to handle the case of non monitor_all since that will use
+ * the ignore feature below.
+ * In this case we need at least 2 iterations:
+ * 1. the initial iteration where we pull the sb content based on the few
+ *    conditions we now have.
+ * 2. after the first engine run we have enough information to update the
+ *    monitoring conditions to their final values.
+ * However based on the structure of the datapaths we might need more. The
+ * value below is just a hard limit of iterations. We detect if we are done
+ * earlier and then skip further iterations. */
 #define DAEMON_STARTUP_DELAY_SEED 20
-#define DAEMON_STARTUP_DELAY_MS   10000
 
 static int64_t startup_ts;
 static int startup_delay = DAEMON_STARTUP_DELAY_SEED;
 
-/* Used by debug command only, for tests. */
+/* Used if we do not need the startup delay (e.g. when using monitor_all). */
 static bool ignore_startup_delay = false;
 
 OVS_CONSTRUCTOR(startup_ts_initializer) {
@@ -980,9 +995,7 @@ daemon_started_recently(void)
     if (startup_delay) {
         return true;
     }
-
-    /* Ensure that at least an amount of time has passed. */
-    return time_wall_msec() - startup_ts <= DAEMON_STARTUP_DELAY_MS;
+    return false;
 }
 
 /* Builds a unique address set compatible name ([a-zA-Z_.][a-zA-Z_.0-9]*)
@@ -1388,6 +1401,52 @@ prefix_is_link_local(const struct in6_addr *prefix, unsigned int plen)
             ((prefix->s6_addr[1] & 0xc0) == 0x80));
 }
 
+bool
+find_prefix_in_set(const struct in6_addr *prefix, unsigned int plen,
+                   const struct sset *prefix_set, const char *filter_name)
+{
+    struct in6_addr lt_prefix;
+    const char *cur_prefix;
+    unsigned int lt_plen;
+
+    SSET_FOR_EACH (cur_prefix, prefix_set) {
+        if (!ip46_parse_cidr(cur_prefix, &lt_prefix, &lt_plen)) {
+            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
+            VLOG_WARN_RL(&rl, "Bad prefix (%s) format: %s. CIDR expected.",
+                         filter_name, cur_prefix);
+            continue;
+        }
+
+        if (IN6_IS_ADDR_V4MAPPED(&lt_prefix) != IN6_IS_ADDR_V4MAPPED(prefix)) {
+            continue;
+        }
+
+        /* 192.168.0.0/16 does not belong to 192.168.0.0/17 */
+        if (plen < lt_plen) {
+            continue;
+        }
+
+        if (IN6_IS_ADDR_V4MAPPED(prefix)) {
+            ovs_be32 bl_prefix_v4 = in6_addr_get_mapped_ipv4(&lt_prefix);
+            ovs_be32 prefix_v4 = in6_addr_get_mapped_ipv4(prefix);
+            ovs_be32 mask = be32_prefix_mask(lt_plen);
+
+            if ((prefix_v4 & mask) == (bl_prefix_v4 & mask)) {
+                return true;
+            }
+        } else {
+            struct in6_addr bl_mask = ipv6_create_mask(lt_plen);
+            struct in6_addr m_prefix = ipv6_addr_bitand(prefix, &bl_mask);
+            struct in6_addr m_bl_prefix = ipv6_addr_bitand(&lt_prefix,
+                                                           &bl_mask);
+            if (ipv6_addr_equals(&m_prefix, &m_bl_prefix)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 const struct sbrec_port_binding *
 lport_lookup_by_name(struct ovsdb_idl_index *sbrec_port_binding_by_name,
                      const char *name)
@@ -1424,4 +1483,23 @@ ovn_mirror_port_name(const char *datapath_name,
                      const char *port_name)
 {
     return xasprintf("mp-%s-%s", datapath_name, port_name);
+}
+
+void
+put_load_bytes(const void *value, size_t len, enum mf_field_id dst,
+               size_t ofs, size_t n_bits, struct ofpbuf *ofpacts)
+{
+    struct ofpact_set_field *sf = ofpact_put_set_field(ofpacts,
+                                                       mf_from_id(dst), NULL,
+                                                       NULL);
+    bitwise_copy(value, len, 0, sf->value, sf->field->n_bytes, ofs, n_bits);
+    bitwise_one(ofpact_set_field_mask(sf), sf->field->n_bytes, ofs, n_bits);
+}
+
+void
+put_load(uint64_t value, enum mf_field_id dst, size_t ofs, size_t n_bits,
+         struct ofpbuf *ofpacts)
+{
+    ovs_be64 n_value = htonll(value);
+    put_load_bytes(&n_value, 8, dst, ofs, n_bits, ofpacts);
 }

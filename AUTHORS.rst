@@ -185,6 +185,7 @@ Hui Kang                           kangh@us.ibm.com
 Hyong Youb Kim                     hyonkim@cisco.com
 Ian Campbell                       Ian.Campbell@citrix.com
 Ian Stokes                         ian.stokes@intel.com
+Igal Tsoiref                       itsoiref@redhat.com
 Igor Zhukov                        ivzhukov@sbercloud.ru
 Ihar Hrachyshka                    ihrachys@redhat.com
 Ihtisham ul Haq                    Ihtisham.ul_Haq@mail.schwarz
@@ -263,6 +264,7 @@ Luigi Rizzo                        rizzo@iet.unipi.it
 Luis E. P.                         l31g@hotmail.com
 Lukasz Rzasik                      lukasz.rzasik@gmail.com
 Madhu Challa                       challa@noironetworks.com
+Mairtin O'Loingsigh                moloings@redhat.com
 Manohar K C                        manukc@gmail.com
 Manoj Sharma                       manoj.sharma@nutanix.com
 Marcin Mirecki                     mmirecki@redhat.com
@@ -381,6 +383,7 @@ Shih-Hao Li                        shihli@vmware.com
 Shu Shen                           shu.shen@radisys.com
 Simon Horman                       horms@ovn.org
 Sorin Vinturis                     svinturis@cloudbasesolutions.com
+Sragdhara Datta Chaudhuri          sragdha.chaudhu@nutanix.com
 Steffen Gebert                     steffen.gebert@informatik.uni-wuerzburg.de
 Sten Spans                         sten@blinkenlights.nl
 Stephane A. Sezer                  sas@cd80.net
@@ -636,6 +639,7 @@ Patrik Andersson R              patrik.r.andersson@ericsson.com
 Patryk Diak                     pdiak@redhat.com
 Paul Greenberg
 Paulo Cravero                   pcravero@as2594.net
+Paulo Guilherme da Silva        guilherme.paulo@luizalabs.com
 Pawan Shukla                    shuklap@vmware.com
 Periyasamy Palanisamy           periyasamy.palanisamy@ericsson.com
 Peter Amidon                    peter@picnicpark.org

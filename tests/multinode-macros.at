@@ -10,7 +10,7 @@ m4_define([M_NS_EXEC],
 # M_NS_DAEMONIZE([fake_node],[namespace],[command],[pidfile])
 m4_define([M_NS_DAEMONIZE],
     [podman exec $1 ip netns exec $2 $3 & echo $! > $4
-     echo "kill \`cat $4\`" >> cleanup
+     echo "kill \`cat $4\` 2>/dev/null" >> cleanup
     ]
 )
 
@@ -36,6 +36,7 @@ m4_define([M_DAEMONIZE],
 m4_define([M_START_TCPDUMP],
     [
      podman exec $1 tcpdump -l $2 >$3.tcpdump 2>$3.stderr &
+     echo "podman exec $1 ps -ef | grep -v grep | grep tcpdump && podman exec $1 killall tcpdump" >> cleanup
      OVS_WAIT_UNTIL([grep -q "listening" $3.stderr])
     ]
 )
@@ -70,25 +71,6 @@ m_central_as () {
     podman exec ovn-central-az1 "$@"
 }
 
-check_fake_multinode_setup() {
-    check m_as ovn-central-az1 ovn-nbctl --wait=sb sync
-    AT_CHECK([m_as ovn-chassis-1 ovn-appctl -t ovn-controller version], [0], [ignore])
-    AT_CHECK([m_as ovn-chassis-2 ovn-appctl -t ovn-controller version], [0], [ignore])
-    AT_CHECK([m_as ovn-gw-1 ovn-appctl -t ovn-controller version], [0], [ignore])
-    AT_CHECK([m_as ovn-gw-1 ovn-appctl -t ovn-controller version], [0], [ignore])
-}
-
-cleanup_multinode_resources() {
-    m_as ovn-central-az1 rm -f /etc/ovn/ovnnb_db.db
-    m_as ovn-central-az1 /usr/share/ovn/scripts/ovn-ctl restart_northd
-    check m_as ovn-central-az1 ovn-nbctl --wait=sb sync
-    for c in ovn-chassis-1 ovn-chassis-2 ovn-gw-1
-    do
-        m_as $c ovs-vsctl del-br br-int
-        m_as $c ip --all netns delete
-    done
-}
-
 multinode_nbctl () {
     m_as ovn-central-az1 ovn-nbctl "$@"
 }
@@ -99,21 +81,60 @@ multinode_sbctl () {
 
 check_fake_multinode_setup_by_nodes() {
     check m_as ovn-central-az1 ovn-nbctl --wait=sb sync
-    for c in $1
-    do
+    for c; do
         AT_CHECK([m_as $c ovn-appctl -t ovn-controller version], [0], [ignore])
+        on_exit "m_as $c ovs-vsctl list Interface > interfaces-${c}.txt"
+        on_exit "m_as $c ovs-vsctl show > ovs-${chassis}.txt"
+        on_exit "m_as $c ovs-ofctl dump-flows br-int > flow-${c}.txt"
+        on_exit "m_as $c ovs-vsctl get open . external_ids > extids-${c}.txt"
     done
+
+    # Check $ENABLE_SSL variable, and use SSL if unset (default) or not set to "no".
+    if [[ "$ENABLE_SSL" != "no" ]]; then
+        REMOTE_PROT=ssl
+        SSL_CERTS_PATH=/opt/ovn
+        CONTROLLER_SSL_ARGS="--ovn-controller-ssl-key=${SSL_CERTS_PATH}/ovn-privkey.pem \
+                             --ovn-controller-ssl-cert=${SSL_CERTS_PATH}/ovn-cert.pem \
+                             --ovn-controller-ssl-ca-cert=${SSL_CERTS_PATH}/pki/switchca/cacert.pem"
+        NORTHD_SSL_ARGS="--ovn-nb-db-ssl-key=${SSL_CERTS_PATH}/ovn-privkey.pem \
+              --ovn-nb-db-ssl-cert=${SSL_CERTS_PATH}/ovn-cert.pem \
+              --ovn-nb-db-ssl-ca-cert=${SSL_CERTS_PATH}/pki/switchca/cacert.pem \
+              --ovn-sb-db-ssl-key=${SSL_CERTS_PATH}/ovn-privkey.pem \
+              --ovn-sb-db-ssl-cert=${SSL_CERTS_PATH}/ovn-cert.pem \
+              --ovn-sb-db-ssl-ca-cert=${SSL_CERTS_PATH}/pki/switchca/cacert.pem \
+              --ovn-northd-ssl-key=${SSL_CERTS_PATH}/ovn-privkey.pem \
+              --ovn-northd-ssl-cert=${SSL_CERTS_PATH}/ovn-cert.pem \
+              --ovn-northd-ssl-ca-cert=${SSL_CERTS_PATH}/pki/switchca/cacert.pem"
+    else
+        REMOTE_PROT=tcp
+        CONTROLLER_SSL_ARGS=""
+        NORTHD_SSL_ARGS=""
+    fi
+        export CONTROLLER_SSL_ARGS
+        export NORTHD_SSL_ARGS
+        export REMOTE_PROT
+}
+
+check_fake_multinode_setup() {
+    check_fake_multinode_setup_by_nodes                         \
+        ovn-chassis-1 ovn-chassis-2 ovn-chassis-3 ovn-chassis-4 \
+        ovn-gw-1 ovn-gw-2 ovn-gw-3 ovn-gw-4
 }
 
 cleanup_multinode_resources_by_nodes() {
     m_as ovn-central-az1 rm -f /etc/ovn/ovnnb_db.db
     m_as ovn-central-az1 /usr/share/ovn/scripts/ovn-ctl restart_northd
     check m_as ovn-central-az1 ovn-nbctl --wait=sb sync
-    for c in $1
-    do
+    for c; do
         m_as $c ovs-vsctl del-br br-int
         m_as $c ip --all netns delete
     done
+}
+
+cleanup_multinode_resources() {
+    cleanup_multinode_resources_by_nodes                        \
+        ovn-chassis-1 ovn-chassis-2 ovn-chassis-3 ovn-chassis-4 \
+        ovn-gw-1 ovn-gw-2 ovn-gw-3 ovn-gw-4
 }
 
 # multinode_cleanup_northd NODE
@@ -123,7 +144,7 @@ multinode_cleanup_northd() {
     c=$1
     # Cleanup existing one
     m_as $c /usr/share/ovn/scripts/ovn-ctl stop_northd
-    m_as $c rm -f /etc/ovn/*.db
+    m_as $c sh -c "rm -f /etc/ovn/*.db"
 }
 
 # multinode_setup_northd NODE
@@ -134,9 +155,10 @@ multinode_setup_northd() {
 
     multinode_cleanup_northd $c
 
-    m_as $c /usr/share/ovn/scripts/ovn-ctl start_northd
-    m_as $c ovn-nbctl set-connection ptcp:6641
-    m_as $c ovn-sbctl set-connection ptcp:6642
+    echo "Using ${NORTHD_SSL_ARGS} for northd".
+    m_as $c /usr/share/ovn/scripts/ovn-ctl start_northd ${NORTHD_SSL_ARGS}
+    m_as $c ovn-nbctl set-connection p${REMOTE_PROT}:6641
+    m_as $c ovn-sbctl set-connection p${REMOTE_PROT}:6642
 }
 
 # multinode_setup_controller NODE ENCAP_IP REMOTE_IP [ENCAP_TYPE]
@@ -151,17 +173,25 @@ multinode_setup_controller() {
     # Cleanup existing one
     m_as $c /usr/share/openvswitch/scripts/ovs-ctl stop
     m_as $c /usr/share/ovn/scripts/ovn-ctl stop_controller
-    m_as $c rm -f /etc/openvswitch/*.db
+    m_as $c sh -c "rm -f /etc/openvswitch/*.db"
 
     m_as $c /usr/share/openvswitch/scripts/ovs-ctl start --system-id=$c
-    m_as $c /usr/share/ovn/scripts/ovn-ctl start_controller
+    echo "Using ${CONTROLLER_SSL_ARGS} for ovn-controller".
+    m_as $c /usr/share/ovn/scripts/ovn-ctl start_controller ${CONTROLLER_SSL_ARGS}
 
     m_as $c ovs-vsctl set open . external_ids:ovn-encap-ip=$encap_ip
     m_as $c ovs-vsctl set open . external-ids:ovn-encap-type=$encap_type
-    m_as $c ovs-vsctl set open . external-ids:ovn-remote=tcp:$remote_ip:6642
+    m_as $c ovs-vsctl set open . external-ids:ovn-remote=${REMOTE_PROT}:$remote_ip:6642
     m_as $c ovs-vsctl set open . external-ids:ovn-openflow-probe-interval=60
     m_as $c ovs-vsctl set open . external-ids:ovn-remote-probe-interval=180000
     m_as $c ovs-vsctl set open . external-ids:ovn-bridge-datapath-type=system
+
+    # Add back br-ex which was removed when removing ovs conf.db
+    m_as $c ovs-vsctl --if-exists del-br br-ex
+    m_as $c ovs-vsctl add-br br-ex
+    m_as $c ip link set eth2 down
+    m_as $c ovs-vsctl add-port br-ex eth2
+    m_as $c ip link set eth2 up
 }
 
 # m_count_rows TABLE [CONDITION...]
@@ -261,6 +291,29 @@ m_check_column() {
     fi
 }
 
+# m_add_internal_port NODE NETNS OVS_BRIDGE PORT IP [GW]
+#
+# Adds an OVS internal PORT to OVS_BRIDGE on NODE and moves the resulting
+# interface in the NETNS namespace.  It also configures it with the provided
+# IP and (optionally) default gateway GW.
+m_add_internal_port() {
+    local node=$1 ns=$2 br=$3 port=$4 ip=$5 gw=$6
+
+    if ! m_as $node ip netns list | grep $ns; then
+        check m_as $node ip netns add $ns
+        on_exit "m_as $node ip netns delete $ns"
+    fi
+    check m_as $node ovs-vsctl add-port $br $port -- set interface $port type=internal
+    on_exit "m_as $node ovs-vsctl del-port $port"
+    check m_as $node ip link set $port netns $ns
+    check m_as $node ip netns exec $ns ip link set $port up
+    check m_as $node ip netns exec $ns ip addr add $ip dev $port
+
+    if test -n "$gw"; then
+        check m_as $node ip netns exec $ns ip route add default via $gw dev $port
+    fi
+}
+
 # m_wait_for_ports_up [PORT...]
 #
 # With arguments, waits for specified Logical_Switch_Ports to come up.
@@ -275,6 +328,18 @@ m_wait_for_ports_up() {
             m_wait_row_count nb:Logical_Switch_Port 1 up=true name=$port
         done
     fi
+}
+
+# m_kill fake_node name
+#
+# Helper to properly kill command in a node.
+m_kill() {
+    containers=$1
+    command=$2
+    for c in $containers; do
+      podman exec $c ps -ef | grep -v grep | grep -q $command && \
+        echo "Killing $command on $c" && podman exec $c killall $command
+    done
 }
 
 OVS_END_SHELL_HELPERS

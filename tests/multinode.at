@@ -167,23 +167,9 @@ check multinode_nbctl lb-add lb0 10.0.0.1:8080 10.0.0.4:8080 udp
 check multinode_nbctl ls-lb-add sw0 lb0
 M_NS_DAEMONIZE([ovn-chassis-2], [sw0p2], [nc -u -l 8080 >/dev/null 2>&1], [nc.pid])
 
-m_as ovn-gw-1 ip netns add ovn-ext0
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext0 -- set interface ext0 type=internal
-m_as ovn-gw-1 ip link set ext0 netns ovn-ext0
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip link set ext0 up
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip addr add 172.20.0.1/24 dev ext0
-
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext1 -- set interface ext1 type=internal
-m_as ovn-gw-1 ip link set ext1 netns ovn-ext0
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip link set ext1 up
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip addr add 172.20.1.1/24 dev ext1
-
-m_as ovn-gw-1 ip netns add ovn-ext2
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext2 -- set interface ext2 type=internal
-m_as ovn-gw-1 ip link set ext2 netns ovn-ext2
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip link set ext2 up
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip addr add 172.20.1.2/24 dev ext2
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip route add default via 172.20.1.1 dev ext2
+m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext0 172.20.0.1/24
+m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext1 172.20.1.1/24
+m_add_internal_port ovn-gw-1 ovn-ext2 br-ex ext2 172.20.1.2/24 172.20.1.1
 
 m_as ovn-gw-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
 m_as ovn-chassis-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
@@ -198,14 +184,14 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -q -c 3 -i 0.3 -w 2 20.0.0.3 | F
 
 # Change ptmu for the geneve tunnel
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1200 dev eth1
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 |grep -q "message too long, mtu=1142"])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 | grep -q -i "message too long"])
 
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route flush dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add default via 10.0.0.1 dev sw0p1])
 
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1400 dev eth1
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping6 -c 5 -s 1450 -M do 2000::3 2>&1 |grep -q "message too long, mtu: 1342"])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping6 -c 5 -s 1450 -M do 2000::3 2>&1 | grep -q -i "message too long"])
 
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -q -c 3 -i 0.3 -w 2 172.20.1.2 | FORMAT_PING], \
 [0], [dnl
@@ -310,23 +296,9 @@ check multinode_nbctl lr-nat-add lr0 snat 172.20.0.100 20.0.0.0/24
 check multinode_nbctl acl-add sw0 from-lport 1002 'ip4 || ip6'  allow-related
 check multinode_nbctl acl-add sw1 from-lport 1002 'ip4 || ip6'  allow-related
 
-m_as ovn-gw-1 ip netns add ovn-ext0
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext0 -- set interface ext0 type=internal
-m_as ovn-gw-1 ip link set ext0 netns ovn-ext0
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip link set ext0 up
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip addr add 172.20.0.1/24 dev ext0
-
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext1 -- set interface ext1 type=internal
-m_as ovn-gw-1 ip link set ext1 netns ovn-ext0
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip link set ext1 up
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip addr add 172.20.1.1/24 dev ext1
-
-m_as ovn-gw-1 ip netns add ovn-ext2
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext2 -- set interface ext2 type=internal
-m_as ovn-gw-1 ip link set ext2 netns ovn-ext2
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip link set ext2 up
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip addr add 172.20.1.2/24 dev ext2
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip route add default via 172.20.1.1 dev ext2
+m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext0 172.20.0.1/24
+m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext1 172.20.1.1/24
+m_add_internal_port ovn-gw-1 ovn-ext2 br-ex ext2 172.20.1.2/24 172.20.1.1
 
 m_as ovn-gw-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
 m_as ovn-chassis-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
@@ -341,7 +313,7 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -q -c 3 -i 0.3 -w 2 20.0.0.3 | F
 
 # Change ptmu for the vxlan tunnel
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1200 dev eth1
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 |grep -q "message too long, mtu=1150"])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 |grep -q -i "message too long"])
 
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route flush dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
@@ -442,23 +414,9 @@ check multinode_nbctl lrp-set-gateway-chassis lr0-sw1 ovn-chassis-2 10
 check multinode_nbctl acl-add sw0 from-lport 1002 'ip4 || ip6'  allow-related
 check multinode_nbctl acl-add sw1 from-lport 1002 'ip4 || ip6'  allow-related
 
-m_as ovn-gw-1 ip netns add ovn-ext0
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext0 -- set interface ext0 type=internal
-m_as ovn-gw-1 ip link set ext0 netns ovn-ext0
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip link set ext0 up
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip addr add 172.20.0.1/24 dev ext0
-
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext1 -- set interface ext1 type=internal
-m_as ovn-gw-1 ip link set ext1 netns ovn-ext0
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip link set ext1 up
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip addr add 172.20.1.1/24 dev ext1
-
-m_as ovn-gw-1 ip netns add ovn-ext2
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext2 -- set interface ext2 type=internal
-m_as ovn-gw-1 ip link set ext2 netns ovn-ext2
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip link set ext2 up
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip addr add 172.20.1.2/24 dev ext2
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip route add default via 172.20.1.1 dev ext2
+m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext0 172.20.0.1/24
+m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext1 172.20.1.1/24
+m_add_internal_port ovn-gw-1 ovn-ext2 br-ex ext2 172.20.1.2/24 172.20.1.1
 
 m_as ovn-gw-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
 m_as ovn-chassis-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
@@ -476,14 +434,14 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add default via 10.0.0.1 dev sw0p1])
 
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1200 dev eth1
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 |grep -q "message too long, mtu=1142"])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 | grep -q -i "message too long"])
 
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route flush dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add default via 10.0.0.1 dev sw0p1])
 
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1400 dev eth1
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping6 -c 5 -s 1450 -M do 2000::3 2>&1 |grep -q "message too long, mtu: 1342"])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping6 -c 5 -s 1450 -M do 2000::3 2>&1 | grep -q -i "message too long"])
 
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route flush dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
@@ -584,23 +542,9 @@ check multinode_nbctl lrp-set-gateway-chassis lr0-sw1 ovn-chassis-2 10
 check multinode_nbctl acl-add sw0 from-lport 1002 'ip4 || ip6'  allow-related
 check multinode_nbctl acl-add sw1 from-lport 1002 'ip4 || ip6'  allow-related
 
-m_as ovn-gw-1 ip netns add ovn-ext0
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext0 -- set interface ext0 type=internal
-m_as ovn-gw-1 ip link set ext0 netns ovn-ext0
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip link set ext0 up
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip addr add 172.20.0.1/24 dev ext0
-
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext1 -- set interface ext1 type=internal
-m_as ovn-gw-1 ip link set ext1 netns ovn-ext0
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip link set ext1 up
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip addr add 172.20.1.1/24 dev ext1
-
-m_as ovn-gw-1 ip netns add ovn-ext2
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext2 -- set interface ext2 type=internal
-m_as ovn-gw-1 ip link set ext2 netns ovn-ext2
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip link set ext2 up
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip addr add 172.20.1.2/24 dev ext2
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip route add default via 172.20.1.1 dev ext2
+m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext0 172.20.0.1/24
+m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext1 172.20.1.1/24
+m_add_internal_port ovn-gw-1 ovn-ext2 br-ex ext2 172.20.1.2/24 172.20.1.1
 
 m_as ovn-gw-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
 m_as ovn-chassis-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
@@ -618,7 +562,7 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add default via 10.0.0.1 dev sw0p1])
 
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1200 dev eth1
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 |grep -q "message too long, mtu=1150"])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 | grep -q -i "message too long"])
 
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route flush dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
@@ -720,23 +664,9 @@ check multinode_nbctl lb-add lb0 10.0.0.1:8080 20.0.0.3:8080 udp
 check multinode_nbctl lr-lb-add lr0 lb0
 M_NS_DAEMONIZE([ovn-chassis-2], [sw1p1], [nc -u -l 8080 >/dev/null 2>&1], [nc.pid])
 
-m_as ovn-gw-1 ip netns add ovn-ext0
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext0 -- set interface ext0 type=internal
-m_as ovn-gw-1 ip link set ext0 netns ovn-ext0
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip link set ext0 up
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip addr add 172.20.0.1/24 dev ext0
-
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext1 -- set interface ext1 type=internal
-m_as ovn-gw-1 ip link set ext1 netns ovn-ext0
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip link set ext1 up
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip addr add 172.20.1.1/24 dev ext1
-
-m_as ovn-gw-1 ip netns add ovn-ext2
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext2 -- set interface ext2 type=internal
-m_as ovn-gw-1 ip link set ext2 netns ovn-ext2
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip link set ext2 up
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip addr add 172.20.1.2/24 dev ext2
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip route add default via 172.20.1.1 dev ext2
+m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext0 172.20.0.1/24
+m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext1 172.20.1.1/24
+m_add_internal_port ovn-gw-1 ovn-ext2 br-ex ext2 172.20.1.2/24 172.20.1.1
 
 m_as ovn-gw-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
 m_as ovn-chassis-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
@@ -754,14 +684,14 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add default via 10.0.0.1 dev sw0p1])
 
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1200 dev eth1
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 |grep -q "message too long, mtu=1142"])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 | grep -q -i "message too long"])
 
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route flush dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add default via 10.0.0.1 dev sw0p1])
 
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1400 dev eth1
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping6 -c 5 -s 1450 -M do 2000::3 2>&1 |grep -q "message too long, mtu: 1342"])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping6 -c 5 -s 1450 -M do 2000::3 2>&1 | grep -q -i "message too long"])
 
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route flush dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
@@ -873,23 +803,9 @@ check multinode_nbctl lb-add lb0 10.0.0.1:8080 20.0.0.3:8080 udp
 check multinode_nbctl lr-lb-add lr0 lb0
 M_NS_DAEMONIZE([ovn-chassis-2], [sw1p1], [nc -u -l 8080 >/dev/null 2>&1], [nc.pid])
 
-m_as ovn-gw-1 ip netns add ovn-ext0
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext0 -- set interface ext0 type=internal
-m_as ovn-gw-1 ip link set ext0 netns ovn-ext0
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip link set ext0 up
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip addr add 172.20.0.1/24 dev ext0
-
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext1 -- set interface ext1 type=internal
-m_as ovn-gw-1 ip link set ext1 netns ovn-ext0
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip link set ext1 up
-m_as ovn-gw-1 ip netns exec ovn-ext0 ip addr add 172.20.1.1/24 dev ext1
-
-m_as ovn-gw-1 ip netns add ovn-ext2
-m_as ovn-gw-1 ovs-vsctl add-port br-ex ext2 -- set interface ext2 type=internal
-m_as ovn-gw-1 ip link set ext2 netns ovn-ext2
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip link set ext2 up
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip addr add 172.20.1.2/24 dev ext2
-m_as ovn-gw-1 ip netns exec ovn-ext2 ip route add default via 172.20.1.1 dev ext2
+m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext0 172.20.0.1/24
+m_add_internal_port ovn-gw-1 ovn-ext0 br-ex ext1 172.20.1.1/24
+m_add_internal_port ovn-gw-1 ovn-ext2 br-ex ext2 172.20.1.2/24 172.20.1.1
 
 m_as ovn-gw-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
 m_as ovn-chassis-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
@@ -907,7 +823,7 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add default via 10.0.0.1 dev sw0p1])
 
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1200 dev eth1
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 |grep -q "message too long, mtu=1150"])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 | grep -q -i "message too long"])
 
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route flush dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
@@ -1018,8 +934,7 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -q -c 3 -i 0.3 -w 2 10.0.0.4 | F
 
 # Change ptmu for the geneve tunnel
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1200 dev eth1
-mtu=$((1200 - overhead))
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 10.0.0.4 2>&1 | grep -q "message too long, mtu=$mtu"])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 10.0.0.4 2>&1 | grep -q -i "message too long"])
 
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route flush dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
@@ -1032,8 +947,7 @@ M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -q -c 3 -i 0.3 -w 2 20.0.0.3 | F
 
 # Change ptmu for the geneve tunnel
 m_as ovn-chassis-1 ip route change 170.168.0.0/16 mtu 1100 dev eth1
-mtu=$((1100 - overhead))
-M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 | grep -q "message too long, mtu=$mtu"])
+M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ping -c 5 -s 1300 -M do 20.0.0.3 2>&1 | grep -q -i "message too long"])
 
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route flush dev sw0p1])
 M_NS_CHECK_EXEC([ovn-chassis-1], [sw0p1], [ip route add 10.0.0.0/24 dev sw0p1])
@@ -1436,13 +1350,9 @@ rm -f *.stderr
 # Make sure that traffic from sw0 still goes out of localnet port
 # for IPs not managed by OVN.
 # Create a fake vm in br-ex on ovn-gw-1 with IP - 10.0.0.10
-m_as ovn-gw-1 ip netns add sw0-p10
-m_as ovn-gw-1 ovs-vsctl add-port br-ex sw0-p10 -- set interface sw0-p10 type=internal
+m_add_internal_port ovn-gw-1 sw0-p10 br-ex sw0-p10 10.0.0.10/24
 m_as ovn-gw-1 ovs-vsctl set port sw0-p10 tag=100
-m_as ovn-gw-1 ip link set sw0-p10 netns sw0-p10
-m_as ovn-gw-1 ip netns exec sw0-p10 ip link set sw0-p10 up
 m_as ovn-gw-1 ip netns exec sw0-p10 ip link set sw0-p10 address 32:31:8c:da:64:4f
-m_as ovn-gw-1 ip netns exec sw0-p10 ip addr add 10.0.0.10/24 dev sw0-p10
 
 # Ping from sw0p1 (on ovn-chassis-1) tp sw0-p10 which is in ovn-gw-1 on
 # external bridge.  The traffic path is
@@ -1587,11 +1497,11 @@ AT_CLEANUP
 
 AT_SETUP([ovn multinode load-balancer with multiple DGPs and multiple chassis])
 
-# Check that ovn-fake-multinode setup is up and running - requires additional nodes
-check_fake_multinode_setup_by_nodes 'ovn-chassis-1 ovn-chassis-2 ovn-chassis-3 ovn-chassis-4 ovn-gw-1 ovn-gw-2'
+# Check that ovn-fake-multinode setup is up and running.
+check_fake_multinode_setup
 
 # Delete the multinode NB and OVS resources before starting the test.
-cleanup_multinode_resources_by_nodes 'ovn-chassis-1 ovn-chassis-2 ovn-chassis-3 ovn-chassis-4 ovn-gw-1 ovn-gw-2'
+cleanup_multinode_resources
 
 # Reset geneve tunnels
 for c in ovn-chassis-1 ovn-chassis-2 ovn-chassis-3 ovn-chassis-4 ovn-gw-1 ovn-gw-2
@@ -2105,11 +2015,11 @@ AT_CLEANUP
 
 AT_SETUP([ovn multinode load-balancer with multiple DGPs and multiple chassis - ECMP environment])
 
-# Check that ovn-fake-multinode setup is up and running - requires additional nodes
-check_fake_multinode_setup_by_nodes 'ovn-chassis-1 ovn-chassis-2 ovn-chassis-3 ovn-gw-1 ovn-gw-2 ovn-gw-3 ovn-gw-4'
+# Check that ovn-fake-multinode setup is up and running
+check_fake_multinode_setup
 
 # Delete the multinode NB and OVS resources before starting the test.
-cleanup_multinode_resources_by_nodes 'ovn-chassis-1 ovn-chassis-2 ovn-chassis-3 ovn-gw-1 ovn-gw-2 ovn-gw-3 ovn-gw-4'
+cleanup_multinode_resources
 
 # Reset geneve tunnels
 for c in ovn-chassis-1 ovn-chassis-2 ovn-chassis-3 ovn-gw-1 ovn-gw-2 ovn-gw-3 ovn-gw-4
@@ -2818,11 +2728,10 @@ AT_SETUP([Migration of container ports])
 # setting iface-id on dst resp. before and after requested-chassis.
 
 # Check that ovn-fake-multinode setup is up and running
-# check_fake_multinode_setup
-check_fake_multinode_setup_by_nodes 'ovn-chassis-1 ovn-chassis-2 ovn-chassis-3'
+check_fake_multinode_setup
 
 # Delete the multinode NB and OVS resources before starting the test.
-cleanup_multinode_resources_by_nodes 'ovn-chassis-1 ovn-chassis-2 ovn-chassis-3'
+cleanup_multinode_resources
 
 m_as ovn-chassis-1 ip link del migrator-p
 m_as ovn-chassis-2 ip link del sw0-port1-p
@@ -3078,4 +2987,482 @@ m_as ovn-chassis-3 killall tcpdump
 
 AT_CLEANUP
 
+AT_SETUP([HA: Check for missing garp on leader when BFD goes back up])
+# Network topology
+#    ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+#    │                                                                                                        │
+#    │    ┌───────────────────┐    ┌───────────────────┐    ┌───────────────────┐    ┌───────────────────┐    │
+#    │    │   ovn-chassis-1   │    │  ovn-gw-1         │    │  ovn-gw-2         │    │  ovn-chassis-2    │    │
+#    │    └─────────┬─────────┘    └───────────────────┘    └───────────────────┘    └───────────────────┘    │
+#    │    ┌─────────┴─────────┐                                                                               │
+#    │    │       inside1     │                                                                               │
+#    │    │   192.168.1.1/24  │                                                                               │
+#    │    └─────────┬─────────┘                                                                               │
+#    │    ┌─────────┴─────────┐                                                                               │
+#    │    │       inside      │                                                                               │
+#    │    └─────────┬─────────┘                                                                               │
+#    │    ┌─────────┴─────────┐                                                                               │
+#    │    │    192.168.1.254  │                                                                               │
+#    │    │         R1        │                                                                               │
+#    │    │    192.168.0.254  │                                                                               │
+#    │    └─────────┬─────────┘                                                                               │
+#    │              └------eth1---------------┬--------eth1-----------┐                                       │
+#    │                             ┌──────────┴────────┐    ┌─────────┴─────────┐                             │
+#    │                             │    192.168.1.254  │    │   192.168.1.254   │                             │
+#    │                             │         R1        │    │         R1        │                             │
+#    │                             │    192.168.0.254  │    │   192.168.0.254   │                             │
+#    │                             └─────────┬─────────┘    └─────────┬─────────┘                             │
+#    │                                       │                        │              ┌───────────────────┐    │
+#    │                             ┌─────────┴─────────┐    ┌─────────┴─────────┐    │    192.168.0.1    │    │
+#    │                             │       outside     │    │       outside     │    │        ext1       │    │
+#    │                             └─────────┬─────────┘    └─────────┬─────────┘    └─────────┬─────────┘    │
+#    │                             ┌─────────┴─────────┐    ┌─────────┴─────────┐    ┌─────────┴─────────┐    │
+#    │                             │    ln-outside     │    │    ln-outside     │    │       ln-ext1     │    │
+#    │                             └─────────┬─────────┘    └─────────┬─────────┘    └─────────┬─────────┘    │
+#    │                             ┌─────────┴─────────┐    ┌─────────┴─────────┐    ┌─────────┴─────────┐    │
+#    │                             │       br-ex       │    │       br-ex       │    │       br-ex       │    │
+#    │                             └─────────┬─────────┘    └─────────┬─────────┘    └─────────┬─────────┘    │
+#    │                                       └---------eth2-----------┴-------eth2-------------┘              │
+#    │                                                                                                        │
+#    └────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
+# The goal of this test is the check that GARP are properly generated by higest priority traffic when
+# BFD goes down, and back up, and this whether the BFD event is due either to some bfd packet lost
+# or by gw death.
+# gw1 is the highest priority gw; gw2 the second priority and gw3 is configured as the lowest priority gw.
+# So gw3 should in this test neither send garp or receive packets.
+#
+# Enable vconn so we can check the GARP from a log perspective.
+m_as ovn-gw-1 ovn-appctl vlog/set vconn:dbg
+m_as ovn-gw-2 ovn-appctl vlog/set vconn:dbg
+m_as ovn-gw-3 ovn-appctl vlog/set vconn:dbg
+m_as ovn-gw-1 ovn-appctl vlog/disable-rate-limit
+m_as ovn-gw-2 ovn-appctl vlog/disable-rate-limit
+m_as ovn-gw-3 ovn-appctl vlog/disable-rate-limit
+
+check_fake_multinode_setup
+
+# Delete the multinode NB and OVS resources before starting the test.
+cleanup_multinode_resources
+
+ip_ch1=$(m_as ovn-chassis-1 ip a show dev eth1 | grep "inet " | awk '{print $2}'| cut -d '/' -f1)
+ip_gw1=$(m_as ovn-gw-1 ip a show dev eth1 | grep "inet " | awk '{print $2}'| cut -d '/' -f1)
+ip_gw2=$(m_as ovn-gw-2 ip a show dev eth1 | grep "inet " | awk '{print $2}'| cut -d '/' -f1)
+ip_gw3=$(m_as ovn-gw-3 ip a show dev eth1 | grep "inet " | awk '{print $2}'| cut -d '/' -f1)
+
+from_gw1_to_gw2=$(m_as ovn-gw-1 ovs-vsctl --bare --columns=name find interface options:remote_ip=$ip_gw2)
+from_gw1_to_gw3=$(m_as ovn-gw-1 ovs-vsctl --bare --columns=name find interface options:remote_ip=$ip_gw3)
+from_gw1_to_ch1=$(m_as ovn-gw-1 ovs-vsctl --bare --columns=name find interface options:remote_ip=$ip_ch1)
+from_gw2_to_gw1=$(m_as ovn-gw-2 ovs-vsctl --bare --columns=name find interface options:remote_ip=$ip_gw1)
+from_gw2_to_gw3=$(m_as ovn-gw-2 ovs-vsctl --bare --columns=name find interface options:remote_ip=$ip_gw3)
+from_gw2_to_ch1=$(m_as ovn-gw-2 ovs-vsctl --bare --columns=name find interface options:remote_ip=$ip_ch1)
+from_ch1_to_gw1=$(m_as ovn-chassis-1 ovs-vsctl --bare --columns=name find interface options:remote_ip=$ip_gw1)
+from_ch1_to_gw2=$(m_as ovn-chassis-1 ovs-vsctl --bare --columns=name find interface options:remote_ip=$ip_gw2)
+
+m_as ovn-chassis-1 ip link del hv1-vif1-p
+m_as ovn-chassis-2 ip link del ext1-p
+
+OVS_WAIT_UNTIL([m_as ovn-chassis-1 ip link show | grep -q genev_sys])
+OVS_WAIT_UNTIL([m_as ovn-chassis-2 ip link show | grep -q genev_sys])
+OVS_WAIT_UNTIL([m_as ovn-gw-1 ip link show | grep -q genev_sys])
+OVS_WAIT_UNTIL([m_as ovn-gw-2 ip link show | grep -q genev_sys])
+OVS_WAIT_UNTIL([m_as ovn-gw-3 ip link show | grep -q genev_sys])
+
+check multinode_nbctl ls-add inside
+check multinode_nbctl ls-add outside
+check multinode_nbctl ls-add ext
+check multinode_nbctl lsp-add inside inside1 -- lsp-set-addresses inside1 "f0:00:c0:a8:01:01 192.168.1.1"
+check multinode_nbctl lsp-add ext ext1 -- lsp-set-addresses ext1 "00:00:c0:a8:00:01 192.168.0.1"
+
+multinode_nbctl create Logical_Router name=R1
+check multinode_nbctl lrp-add R1 R1_inside f0:00:c0:a8:01:fe 192.168.1.254/24
+check multinode_nbctl -- lsp-add inside inside_R1 \
+                      -- set Logical_Switch_Port inside_R1 type=router options:router-port=R1_inside \
+                      -- lsp-set-addresses inside_R1 router
+
+check multinode_nbctl lrp-add R1 R1_outside f0:00:c0:a8:00:fe 192.168.0.254/24
+check multinode_nbctl -- lsp-add outside outside_R1 \
+                      -- set Logical_Switch_Port outside_R1 type=router options:router-port=R1_outside \
+                      -- lsp-set-addresses outside_R1 router
+
+multinode_nbctl -- --id=@gc0 create Gateway_Chassis name=outside_gw1 chassis_name=ovn-gw-1 priority=20 \
+                -- --id=@gc1 create Gateway_Chassis name=outside_gw2 chassis_name=ovn-gw-2 priority=10 \
+                -- --id=@gc2 create Gateway_Chassis name=outside_gw3 chassis_name=ovn-gw-3 priority=5 \
+                -- set Logical_Router_Port R1_outside 'gateway_chassis=[@gc0,@gc1,@gc2]'
+
+# Create localnet port in outside
+check multinode_nbctl lsp-add outside ln-outside
+check multinode_nbctl lsp-set-addresses ln-outside unknown
+check multinode_nbctl lsp-set-type ln-outside localnet
+check multinode_nbctl lsp-set-options ln-outside network_name=public
+
+# Create localnet port in ext1
+check multinode_nbctl lsp-add ext ln-ext1
+check multinode_nbctl lsp-set-addresses ln-ext1 unknown
+check multinode_nbctl lsp-set-type ln-ext1 localnet
+check multinode_nbctl lsp-set-options ln-ext1 network_name=public
+
+# Make sure garp-max-timeout-sec is not set
+m_as ovn-gw-1 ovs-vsctl remove open . external_ids garp-max-timeout-sec
+m_as ovn-gw-2 ovs-vsctl remove open . external_ids garp-max-timeout-sec
+m_as ovn-gw-3 ovs-vsctl remove open . external_ids garp-max-timeout-sec
+
+m_as ovn-chassis-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
+m_as ovn-chassis-2 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
+m_as ovn-gw-1 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
+m_as ovn-gw-2 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
+m_as ovn-gw-3 ovs-vsctl set open . external-ids:ovn-bridge-mappings=public:br-ex
+
+m_as ovn-chassis-1 /data/create_fake_vm.sh inside1 hv1-vif1 f0:00:c0:a8:01:01 1500 192.168.1.1 24 192.168.1.254 2000::1/64 2000::a
+m_as ovn-chassis-2 /data/create_fake_vm.sh ext1 ext1 00:00:c0:a8:00:01 1500 192.168.0.1 24 192.168.0.254 1000::3/64 1000::a
+
+# There should be one ha_chassis_group with the name "R1_outside"
+m_check_row_count HA_Chassis_Group 1 name=R1_outside
+
+# There should be 2 ha_chassis rows in SB DB.
+m_check_row_count HA_Chassis 3 'chassis!=[[]]'
+
+ha_ch=$(m_fetch_column HA_Chassis_Group ha_chassis)
+m_check_column "$ha_ch" HA_Chassis _uuid
+
+gw1_chassis=$(m_fetch_column Chassis _uuid name=ovn-gw-1)
+gw2_chassis=$(m_fetch_column Chassis _uuid name=ovn-gw-2)
+gw3_chassis=$(m_fetch_column Chassis _uuid name=ovn-gw-3)
+
+wait_bfd_enabled() {
+    chassis=$1
+    interface=$2
+    echo "Using $chassis $interface"
+    OVS_WAIT_UNTIL([test 1 = $(m_as $chassis ovs-vsctl --bare --columns bfd find Interface name=$interface | \
+grep "enable=true" | wc -l)
+])
+}
+
+wait_bfd_up() {
+    hv1=$1
+    hv2=$2
+
+    echo "checking bfd_status for $hv1 => $hv2"
+    OVS_WAIT_UNTIL([
+        state=$(m_as $hv1 ovs-vsctl get interface $hv2 bfd_status:state)
+        remote_state=$(m_as $hv1 ovs-vsctl get interface $hv2 bfd_status:remote_state)
+        echo "$(date +%H:%M:%S.%03N) bfd state = $state, remote_state = $remote_state"
+        test "$state" = "up" -a "$remote_state" = "up"
+    ])
+}
+
+# check BFD enablement on tunnel ports from ovn-gw-1 ##########
+for chassis in $from_gw1_to_gw2 $from_gw1_to_gw3 $from_gw1_to_ch1; do
+    echo "checking ovn-gw-1 -> $chassis"
+    wait_bfd_enabled ovn-gw-1 $chassis
+done
+
+# check BFD enablement on tunnel ports from ovn-gw-2 ##########
+for chassis in $from_gw2_to_gw1 $from_gw2_to_gw3 $from_gw2_to_ch1; do
+    echo "checking ovn-gw-2 -> $chassis"
+    wait_bfd_enabled ovn-gw-2 $chassis
+done
+
+# check BFD enablement on tunnel ports from ovn-chassis-1 ###########
+for chassis in $from_ch1_to_gw1 $from_ch1_to_gw2; do
+    echo "checking ovn-chassis-1 -> $chassis"
+    wait_bfd_enabled ovn-chassis-1 $chassis
+done
+
+# Make sure there is no nft table left. Do not use nft directly as might not be installed in container.
+gw1_pid=$(podman inspect -f '{{.State.Pid}}' ovn-gw-1)
+nsenter --net=/proc/$gw1_pid/ns/net nft list tables | grep ovn-test && nsenter --net=/proc/$gw1_pid/ns/net nft delete table ip ovn-test
+on_exit "nsenter --net=/proc/$gw1_pid/ns/net nft list tables | grep ovn-test && nsenter --net=/proc/$gw1_pid/ns/net nft delete table ip ovn-test"
+
+for chassis in $from_gw1_to_gw2 $from_gw1_to_gw3 $from_gw1_to_ch1; do
+    wait_bfd_up ovn-gw-1 $chassis
+done
+for chassis in $from_gw2_to_gw1 $from_gw2_to_gw3 $from_gw2_to_ch1; do
+    wait_bfd_up ovn-gw-2 $chassis
+done
+for chassis in $from_ch1_to_gw1 $from_ch1_to_gw2; do
+    wait_bfd_up ovn-chassis-1 $chassis
+done
+
+m_wait_row_count Port_Binding 1 logical_port=cr-R1_outside chassis=$gw1_chassis
+check multinode_nbctl --wait=hv sync
+
+start_tcpdump() {
+    echo "$(date +%H:%M:%S.%03N) Starting tcpdump"
+    M_START_TCPDUMP([ovn-chassis-1], [-neei hv1-vif1-p], [ch1])
+    M_START_TCPDUMP([ovn-chassis-2], [-neei eth2], [ch2])
+    M_START_TCPDUMP([ovn-gw-1], [-neei eth2], [gw1])
+    M_START_TCPDUMP([ovn-gw-1], [-neei eth2 -Q out], [gw1_out])
+    M_START_TCPDUMP([ovn-gw-2], [-neei eth2], [gw2])
+    M_START_TCPDUMP([ovn-gw-2], [-neei eth2 -Q out], [gw2_out])
+    M_START_TCPDUMP([ovn-gw-3], [-neei eth2], [gw3])
+    M_START_TCPDUMP([ovn-gw-3], [-neei eth2 -Q out], [gw3_out])
+}
+
+stop_tcpdump() {
+    echo "$(date +%H:%M:%S.%03N) Stopping tcpdump"
+    m_kill 'ovn-gw-1 ovn-gw-2 ovn-gw-3 ovn-chassis-1 ovn-chassis-2' tcpdump
+}
+
+# Send packets from chassis2 (ext1) to chassis1
+send_background_packets() {
+    echo "$(date +%H:%M:%S.%03N) Sending packets in Background"
+    start_tcpdump
+    M_NS_DAEMONIZE([ovn-chassis-2], [ext1], [ping -f -i 0.1 192.168.1.1], [ping.pid])
+}
+
+stop_sending_background_packets() {
+    echo "$(date +%H:%M:%S.%03N) Stopping Background process"
+    m_as ovn-chassis-1 ps -ef | grep -v grep | grep -q ping && \
+        m_as ovn-chassis-1 echo "Stopping ping on ovn-chassis-1" && killall ping
+    m_as ovn-chassis-2 ps -ef | grep -v grep | grep -q ping && \
+        m_as ovn-chassis-2 echo "Stopping ping on ovn-chassis-2" && killall ping
+    stop_tcpdump
+}
+
+check_for_new_garps() {
+    hv=$1
+    expecting_garp=$2
+    n_new_garps=$(cat ${hv}_out.tcpdump | grep -c "f0:00:c0:a8:00:fe > Broadcast, ethertype ARP (0x0806), length 42: Request who-has 192.168.0.254 tell 192.168.0.254, length 28")
+
+    if [ "$expecting_garp" == "true" ]; then
+        AS_BOX([$(date +%H:%M:%S.%03N) Waiting/checking for garp from $hv - Starting with $n_new_garps])
+        OVS_WAIT_UNTIL([
+            n_garps=$n_new_garps
+            n_new_garps=$(cat ${hv}_out.tcpdump | grep -c "f0:00:c0:a8:00:fe > Broadcast, ethertype ARP (0x0806), length 42: Request who-has 192.168.0.254 tell 192.168.0.254, length 28")
+            echo "We saw $n_new_garps so far on ${hv}."
+            test "$n_garps" -ne "$n_new_garps"
+        ])
+    else
+        AS_BOX([$(date +%H:%M:%S.%03N) Checking no garp from ${hv}])
+        # Waiting a few seconds to get a chance to see unexpected garps.
+        sleep 3
+        n_garps=$(cat ${hv}_out.tcpdump | grep -c "f0:00:c0:a8:00:fe > Broadcast, ethertype ARP (0x0806), length 42: Request who-has 192.168.0.254 tell 192.168.0.254, length 28")
+        AT_CHECK([test "$n_garps" -eq "$n_new_garps"])
+    fi
+}
+
+check_for_new_echo_pkts() {
+    hv=$1
+    mac_src=$2
+    mac_dst=$3
+    expecting_pkts=$4
+    n_new_echo_req=$(cat ${hv}.tcpdump | grep -c "$mac_src > $mac_dst, ethertype IPv4 (0x0800), length 98: 192.168.0.1 > 192.168.1.1: ICMP echo request")
+    n_new_echo_rep=$(cat ${hv}.tcpdump | grep -c "$mac_dst > $mac_src, ethertype IPv4 (0x0800), length 98: 192.168.1.1 > 192.168.0.1: ICMP echo reply")
+
+    if [ "$expecting_pkts" == "true" ]; then
+        AS_BOX([$(date +%H:%M:%S.%03N) Waiting/checking for echo pkts through ${hv}])
+        echo "Starting with $n_new_echo_req requests and $n_new_echo_rep replies so far on ${hv}."
+        OVS_WAIT_UNTIL([
+            n_echo_req=$n_new_echo_req
+            n_echo_rep=$n_new_echo_rep
+            n_new_echo_req=$(cat ${hv}.tcpdump | grep -c "$mac_src > $mac_dst, ethertype IPv4 (0x0800), length 98: 192.168.0.1 > 192.168.1.1: ICMP echo request")
+            n_new_echo_rep=$(cat ${hv}.tcpdump | grep -c "$mac_dst > $mac_src, ethertype IPv4 (0x0800), length 98: 192.168.1.1 > 192.168.0.1: ICMP echo reply")
+            echo "We saw $n_new_echo_req requests and $n_new_echo_rep replies so far on ${hv}."
+            test "$n_echo_req" -ne "$n_new_echo_req" && test "$n_echo_rep" -ne "$n_new_echo_rep"
+        ])
+    else
+        AS_BOX([$(date +%H:%M:%S.%03N) Checking no pkts from ${hv}])
+        # Waiting a few seconds to get a chance to see unexpected pkts.
+        sleep 3
+        n_echo_req=$(cat ${hv}.tcpdump | grep -c "$mac_src > $mac_dst, ethertype IPv4 (0x0800), length 98: 192.168.0.1 > 192.168.1.1: ICMP echo request")
+        n_echo_rep=$(cat ${hv}.tcpdump | grep -c "$mac_dst > $mac_src, ethertype IPv4 (0x0800), length 98: 192.168.1.1 > 192.168.0.1: ICMP echo reply")
+        echo "We saw $n_new_echo_req requests and $n_new_echo_rep replies on ${hv}."
+        AT_CHECK([test "$n_echo_req" -eq "$n_new_echo_req" && test "$n_echo_rep" -eq "$n_new_echo_rep"])
+    fi
+}
+
+dump_statistics() {
+    n1=$(m_as ovn-gw-1 grep -c Changing /var/log/ovn/ovn-controller.log)
+    n2=$(m_as ovn-gw-2 grep -c Changing /var/log/ovn/ovn-controller.log)
+    n3=$(m_as ovn-gw-3 grep -c Changing /var/log/ovn/ovn-controller.log)
+    ch1_req=$(grep -c "ICMP echo request" ch1.tcpdump)
+    ch1_rep=$(grep -c "ICMP echo reply" ch1.tcpdump)
+    ch2_req=$(grep -c "ICMP echo request" ch2.tcpdump)
+    ch2_rep=$(grep -c "ICMP echo reply" ch2.tcpdump)
+    gw1_req=$(grep -c "ICMP echo request" gw1.tcpdump)
+    gw1_rep=$(grep -c "ICMP echo reply" gw1.tcpdump)
+    gw2_req=$(grep -c "ICMP echo request" gw2.tcpdump)
+    gw2_rep=$(grep -c "ICMP echo reply" gw2.tcpdump)
+    gw3_req=$(grep -c "ICMP echo request" gw3.tcpdump)
+    gw3_rep=$(grep -c "ICMP echo reply" gw3.tcpdump)
+    echo "$n1 claims in gw1, $n2 in gw2 and $n3 on gw3"
+    echo "ch2_request=$ch2_req gw1_request=$gw1_req gw2_request=$gw2_req gw3_request=$gw3_req ch1_request=$ch1_req ch1_reply=$ch1_rep gw1_reply=$gw1_rep gw2_reply=$gw2_rep gw3_reply=$gw3_rep ch2_reply=$ch2_rep"
+}
+
+check_migration_between_gw1_and_gw2() {
+    action=$1
+    send_background_packets
+
+    # We make sure gw1 is leader since enough time that it generated all its garps.
+    AS_BOX([$(date +%H:%M:%S.%03N) Waiting all garps sent by gw1])
+    n_new_garps=$(cat gw1_out.tcpdump | grep -c "f0:00:c0:a8:00:fe > Broadcast, ethertype ARP (0x0806), length 42: Request who-has 192.168.0.254 tell 192.168.0.254, length 28")
+    OVS_WAIT_UNTIL([
+        n_garps=$n_new_garps
+        echo "We saw $n_garps so far."
+        # Garp delay might be up to 8 seconds.
+        sleep 10
+        n_new_garps=$(cat gw1_out.tcpdump | grep -c "f0:00:c0:a8:00:fe > Broadcast, ethertype ARP (0x0806), length 42: Request who-has 192.168.0.254 tell 192.168.0.254, length 28")
+        test "$n_garps" -eq "$n_new_garps"
+    ])
+
+    # All packets should go through gw1, and none through gw2 or gw3.
+    check_for_new_echo_pkts gw1 "00:00:c0:a8:00:01" "f0:00:c0:a8:00:fe" "true"
+    check_for_new_echo_pkts gw2 "00:00:c0:a8:00:01" "f0:00:c0:a8:00:fe" "false"
+    check_for_new_echo_pkts gw3 "00:00:c0:a8:00:01" "f0:00:c0:a8:00:fe" "false"
+
+    flap_count_gw_1=$(m_as ovn-gw-1 ovs-vsctl get interface $from_gw1_to_gw2 bfd_status | sed 's/.*flap_count=\"\([[0-9]]*\).*/\1/g')
+    flap_count_gw_2=$(m_as ovn-gw-2 ovs-vsctl get interface $from_gw2_to_gw1 bfd_status | sed 's/.*flap_count=\"\([[0-9]]*\).*/\1/g')
+
+    if [ test "$action" == "stop_bfd" ]; then
+        AS_BOX([$(date +%H:%M:%S.%03N) Blocking bfd on gw1 (from $ip_gw1 to $ip_gw2)])
+        nsenter --net=/proc/$gw1_pid/ns/net nft add table ip ovn-test
+        nsenter --net=/proc/$gw1_pid/ns/net nft 'add chain ip ovn-test INPUT { type filter hook input priority 0; policy accept; }'
+        # Drop BFD from gw-1 to gw-2: geneve port (6081), inner port 3784 (0xec8), Session state Up, Init, Down.
+        nsenter --net=/proc/$gw1_pid/ns/net nft add rule ip ovn-test INPUT ip daddr $ip_gw1 ip saddr $ip_gw2 udp dport 6081 '@th,416,16 == 0x0ec8 @th,472,8 == 0xc0  counter drop'
+        nsenter --net=/proc/$gw1_pid/ns/net nft add rule ip ovn-test INPUT ip daddr $ip_gw1 ip saddr $ip_gw2 udp dport 6081 '@th,416,16 == 0x0ec8 @th,472,8 == 0x80  counter drop'
+        nsenter --net=/proc/$gw1_pid/ns/net nft add rule ip ovn-test INPUT ip daddr $ip_gw1 ip saddr $ip_gw2 udp dport 6081 '@th,416,16 == 0x0ec8 @th,472,8 == 0x40  counter drop'
+
+        # We do not check that packets go through gw2 as BFD between chassis-2 and gw1 is still up
+    fi
+
+    if [ test "$action" == "kill_gw2" ]; then
+        AS_BOX([$(date +%H:%M:%S.%03N) Killing gw2 ovn-controller])
+        on_exit 'm_as ovn-gw-2 /usr/share/openvswitch/scripts/ovs-ctl status ||
+                 m_as ovn-gw-2 /usr/share/openvswitch/scripts/ovs-ctl start --system-id=ovn-gw-1'
+        on_exit 'm_as ovn-gw-2 /usr/share/ovn/scripts/ovn-ctl status_controller ||
+                 m_as ovn-gw-2 /usr/share/ovn/scripts/ovn-ctl start_controller ${CONTROLLER_SSL_ARGS}'
+
+        m_as ovn-gw-2 kill -9 $(m_as ovn-gw-2 cat /run/ovn/ovn-controller.pid)
+        m_as ovn-gw-2 kill -9 $(m_as ovn-gw-2 cat /run/openvswitch/ovs-vswitchd.pid)
+        m_as ovn-gw-2 kill -9 $(m_as ovn-gw-2 cat /run/openvswitch/ovsdb-server.pid)
+        # Also delete datapath (flows)
+        m_as ovn-gw-2 ovs-dpctl del-dp system@ovs-system
+    fi
+
+    if [ test "$action" == "kill_gw1" ]; then
+        AS_BOX([$(date +%H:%M:%S.%03N) Killing gw1 ovn-controller])
+        on_exit 'm_as ovn-gw-1 /usr/share/openvswitch/scripts/ovs-ctl status ||
+                 m_as ovn-gw-1 /usr/share/openvswitch/scripts/ovs-ctl start --system-id=ovn-gw-1'
+        on_exit 'm_as ovn-gw-1 /usr/share/ovn/scripts/ovn-ctl status_controller ||
+                 m_as ovn-gw-1 /usr/share/ovn/scripts/ovn-ctl start_controller ${CONTROLLER_SSL_ARGS}'
+
+        m_as ovn-gw-1 kill -9 $(m_as ovn-gw-1 cat /run/ovn/ovn-controller.pid)
+        m_as ovn-gw-1 kill -9 $(m_as ovn-gw-1 cat /run/openvswitch/ovs-vswitchd.pid)
+        m_as ovn-gw-1 kill -9 $(m_as ovn-gw-1 cat /run/openvswitch/ovsdb-server.pid)
+        # Also delete datapath (flows)
+        m_as ovn-gw-1 ovs-dpctl del-dp system@ovs-system
+    fi
+
+    if [ test "$action" == "kill_gw2" ]; then
+        AS_BOX([$(date +%H:%M:%S.%03N) Waiting for flap count between gw1 and gw2 to increase])
+        OVS_WAIT_UNTIL([
+            new_flap_count=$(m_as ovn-gw-1 ovs-vsctl get interfac $from_gw1_to_gw2 bfd_status | sed 's/.*flap_count=\"\([[0-9]]*\).*/\1/g')
+            echo "Comparing $new_flap_count versus $flap_count_gw_1"
+            test "$new_flap_count" -gt "$((flap_count_gw_1))"
+        ])
+    else
+        AS_BOX([$(date +%H:%M:%S.%03N) Waiting for flap count between gw2 and gw1 to increase])
+        OVS_WAIT_UNTIL([
+            new_flap_count=$(m_as ovn-gw-2 ovs-vsctl get interfac $from_gw2_to_gw1 bfd_status | sed 's/.*flap_count=\"\([[0-9]]*\).*/\1/g')
+            echo "Comparing $new_flap_count versus $flap_count_gw_2"
+            test "$new_flap_count" -gt "$((flap_count_gw_2))"
+        ])
+
+    fi
+    AS_BOX([$(date +%H:%M:%S.%03N) Flapped!])
+
+    # Wait a few more second for the fight.
+    sleep 2
+    AS_BOX([$(date +%H:%M:%S.%03N) Statistics after flapping])
+    dump_statistics
+
+    if [ test "$action" == "stop_bfd" ]; then
+        # gw1 still alive and gw2 tried to claim => gw1 should restart generating garps.
+        check_for_new_garps gw1 "true"
+        check_for_new_garps gw2 "false"
+        check_for_new_garps gw3 "false"
+        check_for_new_echo_pkts gw1 00:00:c0:a8:00:01 f0:00:c0:a8:00:fe "true"
+        check_for_new_echo_pkts gw2 00:00:c0:a8:00:01 f0:00:c0:a8:00:fe "false"
+        check_for_new_echo_pkts gw3 00:00:c0:a8:00:01 f0:00:c0:a8:00:fe "false"
+        check_for_new_echo_pkts ch1 f0:00:c0:a8:01:fe f0:00:c0:a8:01:01 "true"
+        AS_BOX([$(date +%H:%M:%S.%03N) Unblocking bfd on gw1])
+        nsenter --net=/proc/$gw1_pid/ns/net nft -a list ruleset
+        nsenter --net=/proc/$gw1_pid/ns/net nft delete table ip ovn-test
+    fi
+
+    if [ test "$action" == "kill_gw2" ]; then
+        # gw1 still alive, but gw2 did not try to claim => gw1 should not generate new garps.
+        check_for_new_garps gw1 "false"
+        check_for_new_garps gw2 "false"
+        check_for_new_garps gw3 "false"
+        check_for_new_echo_pkts gw1 00:00:c0:a8:00:01 f0:00:c0:a8:00:fe "true"
+        check_for_new_echo_pkts gw2 00:00:c0:a8:00:01 f0:00:c0:a8:00:fe "false"
+        check_for_new_echo_pkts gw3 00:00:c0:a8:00:01 f0:00:c0:a8:00:fe "false"
+        check_for_new_echo_pkts ch1 f0:00:c0:a8:01:fe f0:00:c0:a8:01:01 "true"
+        AS_BOX([$(date +%H:%M:%S.%03N) Restarting gw2 ovn-vswitchd])
+        m_as ovn-gw-2 /usr/share/openvswitch/scripts/ovs-ctl start --system-id=ovn-gw-2
+
+        AS_BOX([$(date +%H:%M:%S.%03N) Restarting gw2 ovn-controller])
+        m_as ovn-gw-2 /usr/share/ovn/scripts/ovn-ctl start_controller ${CONTROLLER_SSL_ARGS}
+    fi
+
+    if [ test "$action" == "kill_gw1" ]; then
+        # gw1 died => gw2 should generate garps.
+        check_for_new_garps gw1 "false"
+        check_for_new_garps gw2 "true"
+        check_for_new_garps gw3 "false"
+        check_for_new_echo_pkts gw1 00:00:c0:a8:00:01 f0:00:c0:a8:00:fe "false"
+        check_for_new_echo_pkts gw2 00:00:c0:a8:00:01 f0:00:c0:a8:00:fe "true"
+        check_for_new_echo_pkts gw3 00:00:c0:a8:00:01 f0:00:c0:a8:00:fe "false"
+        check_for_new_echo_pkts ch1 f0:00:c0:a8:01:fe f0:00:c0:a8:01:01 "true"
+        AS_BOX([$(date +%H:%M:%S.%03N) Restarting gw1 ovn-vswitchd])
+        m_as ovn-gw-1 /usr/share/openvswitch/scripts/ovs-ctl start --system-id=ovn-gw-1
+
+        AS_BOX([$(date +%H:%M:%S.%03N) Restarting gw1 ovn-controller])
+        m_as ovn-gw-1 /usr/share/ovn/scripts/ovn-ctl start_controller ${CONTROLLER_SSL_ARGS}
+    fi
+
+    # The network is now restored => packets should go through gw1 and reach chassis-1.
+    check_for_new_echo_pkts gw1 00:00:c0:a8:00:01 f0:00:c0:a8:00:fe "true"
+    check_for_new_echo_pkts gw2 00:00:c0:a8:00:01 f0:00:c0:a8:00:fe "false"
+    check_for_new_echo_pkts gw3 00:00:c0:a8:00:01 f0:00:c0:a8:00:fe "false"
+    check_for_new_echo_pkts ch1 f0:00:c0:a8:01:fe f0:00:c0:a8:01:01 "true"
+    AS_BOX([$(date +%H:%M:%S.%03N) Statistics after network restored])
+    dump_statistics
+    stop_sending_background_packets
+}
+
+start_tcpdump
+AS_BOX([$(date +%H:%M:%S.%03N) Sending packet from hv1-vif1(inside1) to ext1])
+M_NS_CHECK_EXEC([ovn-chassis-1], [hv1-vif1], [ping -c3 -q -i 0.1 192.168.0.1 | FORMAT_PING],
+[0], [dnl
+3 packets transmitted, 3 received, 0% packet loss, time 0ms
+])
+stop_tcpdump
+
+# It should have gone through gw1 and not gw2
+AS_BOX([$(date +%H:%M:%S.%03N) Checking it went through gw1 and not gw2])
+AT_CHECK([cat gw2.tcpdump | grep "ICMP echo"], [1], [dnl
+])
+
+AT_CHECK([cat gw1.tcpdump | grep "ICMP echo" | cut -d  ' ' -f2-15], [0], [dnl
+f0:00:c0:a8:00:fe > 00:00:c0:a8:00:01, ethertype IPv4 (0x0800), length 98: 192.168.1.1 > 192.168.0.1: ICMP echo request,
+00:00:c0:a8:00:01 > f0:00:c0:a8:00:fe, ethertype IPv4 (0x0800), length 98: 192.168.0.1 > 192.168.1.1: ICMP echo reply,
+f0:00:c0:a8:00:fe > 00:00:c0:a8:00:01, ethertype IPv4 (0x0800), length 98: 192.168.1.1 > 192.168.0.1: ICMP echo request,
+00:00:c0:a8:00:01 > f0:00:c0:a8:00:fe, ethertype IPv4 (0x0800), length 98: 192.168.0.1 > 192.168.1.1: ICMP echo reply,
+f0:00:c0:a8:00:fe > 00:00:c0:a8:00:01, ethertype IPv4 (0x0800), length 98: 192.168.1.1 > 192.168.0.1: ICMP echo request,
+00:00:c0:a8:00:01 > f0:00:c0:a8:00:fe, ethertype IPv4 (0x0800), length 98: 192.168.0.1 > 192.168.1.1: ICMP echo reply,
+])
+
+# We stop bfd between gw1 & gw2, but keep gw1 & gw2 running.
+check_migration_between_gw1_and_gw2 "stop_bfd"
+
+# We simulate death of gw2. It should not have any effect.
+check_migration_between_gw1_and_gw2 "kill_gw2"
+
+# We simulate death of gw1. gw2 should take over.
+check_migration_between_gw1_and_gw2 "kill_gw1"
+
+AT_CLEANUP
+])

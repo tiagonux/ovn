@@ -97,18 +97,6 @@ physical_register_ovs_idl(struct ovsdb_idl *ovs_idl)
 }
 
 static void
-put_load(uint64_t value, enum mf_field_id dst, int ofs, int n_bits,
-         struct ofpbuf *ofpacts)
-{
-    struct ofpact_set_field *sf = ofpact_put_set_field(ofpacts,
-                                                       mf_from_id(dst), NULL,
-                                                       NULL);
-    ovs_be64 n_value = htonll(value);
-    bitwise_copy(&n_value, 8, 0, sf->value, sf->field->n_bytes, ofs, n_bits);
-    bitwise_one(ofpact_set_field_mask(sf), sf->field->n_bytes, ofs, n_bits);
-}
-
-static void
 put_move(enum mf_field_id src, int src_ofs,
          enum mf_field_id dst, int dst_ofs,
          int n_bits,
@@ -872,8 +860,7 @@ put_replace_router_port_mac_flows(const struct physical_ctx *ctx,
         struct ofpact_mac *replace_mac;
         char *cr_peer_name = xasprintf("cr-%s", rport_binding->logical_port);
         if (lport_is_chassis_resident(ctx->sbrec_port_binding_by_name,
-                                      ctx->chassis, ctx->active_tunnels,
-                                      cr_peer_name)) {
+                                      ctx->chassis, cr_peer_name)) {
             /* If a router port's chassisredirect port is
              * resident on this chassis, then we need not do mac replace. */
             free(cr_peer_name);
@@ -3034,41 +3021,79 @@ physical_run(struct physical_ctx *p_ctx,
     add_default_drop_flow(p_ctx, OFTABLE_LOG_TO_PHY, flow_table);
 
     /* Table 81, 82 and 83
-     * Match on ct.trk and ct.est and store the ct_nw_dst, ct_ip6_dst and
-     * ct_tp_dst in the registers. */
-    uint32_t ct_state = OVS_CS_F_TRACKED | OVS_CS_F_ESTABLISHED;
+     * Match on ct.trk and ct.est | ct.new and store the ct_nw_dst, ct_ip6_dst,
+     * ct_tp_dst and ct_proto in the registers. */
+    uint32_t ct_state_est = OVS_CS_F_TRACKED | OVS_CS_F_ESTABLISHED;
+    uint32_t ct_state_new = OVS_CS_F_TRACKED | OVS_CS_F_NEW;
+    struct match match_new = MATCH_CATCHALL_INITIALIZER;
     match_init_catchall(&match);
     ofpbuf_clear(&ofpacts);
 
-    /* Add the flow:
-     * match = (ct.trk && ct.est), action = (reg8 = ct_tp_dst)
+    /* Add the flows:
+     * match = (ct.trk && ct.est), action = (<reg_result> = ct_tp_dst)
+     * table = 83
+     * match = (ct.trk && ct.new), action = (<reg_result> = ct_tp_dst)
      * table = 83
      */
-    match_set_ct_state_masked(&match, ct_state, ct_state);
-    put_move(MFF_CT_TP_DST, 0,  MFF_LOG_CT_ORIG_TP_DST_PORT, 0, 16, &ofpacts);
+    match_set_ct_state_masked(&match, ct_state_est, ct_state_est);
+    put_move(MFF_CT_TP_DST, 0,  MFF_LOG_RESULT_REG, 0, 16, &ofpacts);
     ofctrl_add_flow(flow_table, OFTABLE_CT_ORIG_TP_DST_LOAD, 100, 0, &match,
                     &ofpacts, hc_uuid);
 
-    /* Add the flow:
-     * match = (ct.trk && ct.est && ip4), action = (reg4 = ct_nw_dst)
+    match_set_ct_state_masked(&match_new, ct_state_new, ct_state_new);
+    put_move(MFF_CT_TP_DST, 0,  MFF_LOG_RESULT_REG, 0, 16, &ofpacts);
+    ofctrl_add_flow(flow_table, OFTABLE_CT_ORIG_TP_DST_LOAD, 100, 0,
+                    &match_new, &ofpacts, hc_uuid);
+
+    /* Add the flows:
+     * match = (ct.trk && ct.est), action = (<reg_result> = ct_proto)
+     * table = 86
+     * match = (ct.trk && ct.new), action = (<reg_result> = ct_proto)
+     * table = 86
+     */
+     ofpbuf_clear(&ofpacts);
+     put_move(MFF_CT_NW_PROTO, 0,  MFF_LOG_RESULT_REG, 0, 8, &ofpacts);
+     ofctrl_add_flow(flow_table, OFTABLE_CT_ORIG_PROTO_LOAD, 100, 0, &match,
+                     &ofpacts, hc_uuid);
+
+     put_move(MFF_CT_NW_PROTO, 0,  MFF_LOG_RESULT_REG, 0, 8, &ofpacts);
+     ofctrl_add_flow(flow_table, OFTABLE_CT_ORIG_PROTO_LOAD, 100, 0,
+                     &match_new, &ofpacts, hc_uuid);
+    /* Add the flows:
+     * match = (ct.trk && ct.est && ip4), action = (<reg_result> = ct_nw_dst)
+     * table = 81
+     * match = (ct.trk && ct.new && ip4), action = (<reg_result> = ct_nw_dst)
      * table = 81
      */
     ofpbuf_clear(&ofpacts);
     match_set_dl_type(&match, htons(ETH_TYPE_IP));
-    put_move(MFF_CT_NW_DST, 0,  MFF_LOG_CT_ORIG_NW_DST_ADDR, 0, 32, &ofpacts);
+    put_move(MFF_CT_NW_DST, 0,  MFF_LOG_RESULT_REG, 0, 32, &ofpacts);
     ofctrl_add_flow(flow_table, OFTABLE_CT_ORIG_NW_DST_LOAD, 100, 0, &match,
                     &ofpacts, hc_uuid);
 
-    /* Add the flow:
-     * match = (ct.trk && ct.est && ip6), action = (xxreg0 = ct_ip6_dst)
+    match_set_dl_type(&match_new, htons(ETH_TYPE_IP));
+    put_move(MFF_CT_NW_DST, 0,  MFF_LOG_RESULT_REG, 0, 32, &ofpacts);
+    ofctrl_add_flow(flow_table, OFTABLE_CT_ORIG_NW_DST_LOAD, 100, 0,
+                    &match_new, &ofpacts, hc_uuid);
+
+    /* Add the flows:
+     * match = (ct.trk && ct.est && ip6), action = (<reg_result> = ct_ip6_dst)
+     * table = 82
+     * match = (ct.trk && ct.new && ip6), action = (<reg_result> = ct_ip6_dst)
      * table = 82
      */
     ofpbuf_clear(&ofpacts);
     match_set_dl_type(&match, htons(ETH_TYPE_IPV6));
-    put_move(MFF_CT_IPV6_DST, 0,  MFF_LOG_CT_ORIG_IP6_DST_ADDR, 0,
+    put_move(MFF_CT_IPV6_DST, 0,  MFF_LOG_RESULT_REG, 0,
              128, &ofpacts);
     ofctrl_add_flow(flow_table, OFTABLE_CT_ORIG_IP6_DST_LOAD, 100, 0, &match,
                     &ofpacts, hc_uuid);
+
+    match_set_dl_type(&match_new, htons(ETH_TYPE_IPV6));
+    put_move(MFF_CT_IPV6_DST, 0,  MFF_LOG_RESULT_REG, 0,
+             128, &ofpacts);
+    ofctrl_add_flow(flow_table, OFTABLE_CT_ORIG_IP6_DST_LOAD, 100, 0,
+                    &match_new, &ofpacts, hc_uuid);
 
     /* Implement the ct_state_save() logical action. */
 

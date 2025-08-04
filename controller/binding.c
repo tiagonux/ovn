@@ -49,7 +49,7 @@ VLOG_DEFINE_THIS_MODULE(binding);
 
 #define OVN_QOS_TYPE "linux-htb"
 
-#define CLAIM_TIME_THRESHOLD_MS 500
+#define CLAIM_TIME_THRESHOLD_MS 2000
 
 struct claimed_port {
     long long int last_claimed;
@@ -191,6 +191,20 @@ destroy_qos_map(struct hmap *qos_map)
     hmap_destroy(qos_map);
 }
 
+static bool
+is_qos_iface(const struct ovsrec_interface *iface)
+{
+    if (smap_get_bool(&iface->external_ids, "ovn-egress-iface", false)) {
+        return true;
+    }
+
+    if (!iface->type[0] || !strcmp(iface->type, "system")) {
+        return true;
+    }
+
+    return false;
+}
+
 static const struct ovsrec_interface *
 get_qos_egress_port_interface(struct shash *bridge_mappings,
                               const struct ovsrec_port **pport,
@@ -211,9 +225,7 @@ get_qos_egress_port_interface(struct shash *bridge_mappings,
                 continue;
             }
 
-            if (smap_get_bool(&iface->external_ids,
-                              "ovn-egress-iface", false) ||
-                !strcmp(iface->type, "")) {
+            if (is_qos_iface(iface)) {
                 *pport = port;
                 return iface;
             }
@@ -654,11 +666,19 @@ update_ld_localnet_port(const struct sbrec_port_binding *binding_rec,
  * Also track if the set has changed.
  */
 static void
-update_local_lports(const char *iface_id, struct binding_ctx_out *b_ctx)
+update_local_lports(const char *iface_id, struct binding_ctx_out *b_ctx,
+                    enum binding_local_lport_status status)
 {
-    if (sset_add(b_ctx->local_lports, iface_id) != NULL) {
-        b_ctx->local_lports_changed = true;
+    struct simap_node *node = simap_find(b_ctx->local_lports, iface_id);
+    if (node && node->data == status) {
+        return;
     }
+    if (node) {
+        node->data = status;
+    } else {
+        simap_put(b_ctx->local_lports, iface_id, status);
+    }
+    b_ctx->local_lports_changed = true;
 }
 
 /* Remove an interface ID from the set of local lports. Also track if the
@@ -667,7 +687,7 @@ update_local_lports(const char *iface_id, struct binding_ctx_out *b_ctx)
 static void
 remove_local_lports(const char *iface_id, struct binding_ctx_out *b_ctx)
 {
-    if (sset_find_and_delete(b_ctx->local_lports, iface_id)) {
+    if (simap_find_and_delete(b_ctx->local_lports, iface_id)) {
         b_ctx->local_lports_changed = true;
     }
 }
@@ -1339,16 +1359,30 @@ remove_additional_chassis(const struct sbrec_port_binding *pb,
 }
 
 bool
-lport_maybe_postpone(const char *port_name, long long int now,
+lport_maybe_postpone(const struct sbrec_port_binding *pb,
+                     const struct sbrec_chassis *chassis_rec,
+                     long long int now,
                      struct sset *postponed_ports)
 {
-    long long int last_claimed = get_claim_timestamp(port_name);
+    if (pb->ha_chassis_group) {
+        struct ha_chassis_ordered *ordered_ha_ch =
+            get_ordered_ha_chassis_list(pb->ha_chassis_group, NULL,
+                                        chassis_rec);
+        if (ordered_ha_ch &&
+            ordered_ha_ch->ha_ch[0].chassis == chassis_rec) {
+            ha_chassis_destroy_ordered(ordered_ha_ch);
+            return false;
+        } else {
+            ha_chassis_destroy_ordered(ordered_ha_ch);
+        }
+    }
+    long long int last_claimed = get_claim_timestamp(pb->logical_port);
     if (now - last_claimed >= CLAIM_TIME_THRESHOLD_MS) {
         return false;
     }
 
-    sset_add(postponed_ports, port_name);
-    VLOG_DBG("Postponed claim on logical port %s.", port_name);
+    sset_add(postponed_ports, pb->logical_port);
+    VLOG_DBG("Postponed claim on logical port %s.", pb->logical_port);
 
     return true;
 }
@@ -1379,7 +1413,7 @@ claim_lport(const struct sbrec_port_binding *pb,
         if (pb->chassis != chassis_rec) {
             long long int now = time_msec();
             if (pb->chassis) {
-                if (lport_maybe_postpone(pb->logical_port, now,
+                if (lport_maybe_postpone(pb, chassis_rec, now,
                                          postponed_ports)) {
                     return true;
                 }
@@ -1604,7 +1638,8 @@ consider_vif_lport_(const struct sbrec_port_binding *pb,
                                b_ctx_out->local_datapaths,
                                b_ctx_out->tracked_dp_bindings);
             update_related_lport(pb, b_ctx_out);
-            update_local_lports(pb->logical_port, b_ctx_out);
+            update_local_lports(pb->logical_port, b_ctx_out,
+                                LPORT_STATUS_BOUND);
             if (binding_lport_update_port_sec(b_lport, pb) &&
                     b_ctx_out->tracked_dp_bindings) {
                 tracked_datapath_lport_add(pb, TRACKED_RESOURCE_UPDATED,
@@ -1907,6 +1942,10 @@ consider_localport(const struct sbrec_port_binding *pb,
         remove_related_lport(pb, b_ctx_out);
     }
 
+    /* Add all localnet ports to local_ifaces so that we allocate ct zones
+     * for them. */
+    update_local_lports(pb->logical_port, b_ctx_out, LPORT_STATUS_BOUND);
+
     update_related_lport(pb, b_ctx_out);
     return true;
 }
@@ -1925,7 +1964,7 @@ consider_nonvif_lport_(const struct sbrec_port_binding *pb,
                            pb->datapath->tunnel_key);
 
     if (our_chassis) {
-        update_local_lports(pb->logical_port, b_ctx_out);
+        update_local_lports(pb->logical_port, b_ctx_out, LPORT_STATUS_BOUND);
         if (!ld) {
             add_local_datapath(b_ctx_in->sbrec_datapath_binding_by_key,
                                b_ctx_in->sbrec_port_binding_by_datapath,
@@ -1965,6 +2004,10 @@ consider_nonvif_lport_(const struct sbrec_port_binding *pb,
     if (!is_ha_chassis) {
         remove_related_lport(pb, b_ctx_out);
     }
+
+    /* If port was postponed to now, and not our chassis, remove it from
+     * postponed ports as it should not be claimed anymore.*/
+    sset_find_and_delete(b_ctx_out->postponed_ports, pb->logical_port);
 
     if (pb->chassis == b_ctx_in->chassis_rec
             || is_additional_chassis(pb, b_ctx_in->chassis_rec)
@@ -2034,7 +2077,7 @@ consider_localnet_lport(const struct sbrec_port_binding *pb,
 
     /* Add all localnet ports to local_ifaces so that we allocate ct zones
      * for them. */
-    update_local_lports(pb->logical_port, b_ctx_out);
+    update_local_lports(pb->logical_port, b_ctx_out, LPORT_STATUS_BOUND);
 
     add_or_del_qos_port(pb->logical_port, true);
     update_related_lport(pb, b_ctx_out);
@@ -2135,7 +2178,8 @@ build_local_bindings(struct binding_ctx_in *b_ctx_in,
                         iface_rec->name);
                 }
 
-                update_local_lports(iface_id, b_ctx_out);
+                update_local_lports(iface_id, b_ctx_out,
+                                    LPORT_STATUS_NOT_BOUND);
                 smap_replace(b_ctx_out->local_iface_ids, iface_rec->name,
                              iface_id);
             } else if (smap_get_bool(&iface_rec->external_ids,
@@ -2402,7 +2446,6 @@ consider_iface_claim(const struct ovsrec_interface *iface_rec,
                      struct binding_ctx_in *b_ctx_in,
                      struct binding_ctx_out *b_ctx_out)
 {
-    update_local_lports(iface_id, b_ctx_out);
     smap_replace(b_ctx_out->local_iface_ids, iface_rec->name, iface_id);
 
     struct shash *local_bindings = &b_ctx_out->lbinding_data->bindings;
@@ -2430,6 +2473,8 @@ consider_iface_claim(const struct ovsrec_interface *iface_rec,
         pb = b_lport->pb;
     }
 
+    update_local_lports(iface_id, b_ctx_out, pb ? LPORT_STATUS_BOUND :
+                        LPORT_STATUS_NOT_BOUND);
     if (!pb) {
         /* There is no port_binding row for this local binding. */
         return true;

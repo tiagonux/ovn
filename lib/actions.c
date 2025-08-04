@@ -199,18 +199,6 @@ encode_restore_args(const struct arg args[], size_t n_args,
     }
 }
 
-static void
-put_load(uint64_t value, enum mf_field_id dst, int ofs, int n_bits,
-         struct ofpbuf *ofpacts)
-{
-    struct ofpact_set_field *sf = ofpact_put_set_field(ofpacts,
-                                                       mf_from_id(dst), NULL,
-                                                       NULL);
-    ovs_be64 n_value = htonll(value);
-    bitwise_copy(&n_value, 8, 0, sf->value, sf->field->n_bytes, ofs, n_bits);
-    bitwise_one(ofpact_set_field_mask(sf), sf->field->n_bytes, ofs, n_bits);
-}
-
 static uint8_t
 first_ptable(const struct ovnact_encode_params *ep,
              enum ovnact_pipeline pipeline)
@@ -5445,13 +5433,60 @@ encode_MAC_CACHE_USE(const struct ovnact_null *null OVS_UNUSED,
     emit_resubmit(ofpacts, ep->mac_cache_use_table);
 }
 
+static bool
+encode_save_temp_reg(const struct ovnact_result *res,
+                     enum mf_field_id field_id, int ofs, int n_bits,
+                     struct ofpbuf *ofpacts)
+{
+    struct mf_subfield res_dst = expr_resolve_field(&res->dst);
+
+    if (res_dst.field->id == field_id) {
+        /* Check if the bits are the same */
+        if (res_dst.ofs == ofs && res_dst.n_bits == n_bits) {
+            return false;
+        } else {
+            /* Assert that the bits are non-overlapping */
+            ovs_assert(res_dst.ofs + res_dst.n_bits <= ofs ||
+                       ofs + n_bits <= res_dst.ofs);
+        }
+    }
+
+    struct ofpact_stack *push = ofpact_put_STACK_PUSH(ofpacts);
+    push->subfield = (struct mf_subfield) {
+        .field = mf_from_id(field_id),
+        .ofs = ofs,
+        .n_bits = n_bits
+    };
+
+    return true;
+}
+
+static void
+encode_restore_temp_reg(enum mf_field_id field_id, int ofs, int n_bits,
+                        struct ofpbuf *ofpacts)
+{
+    struct ofpact_stack *pop = ofpact_put_STACK_POP(ofpacts);
+    pop->subfield = (struct mf_subfield) {
+        .field = mf_from_id(field_id),
+        .ofs = ofs,
+        .n_bits = n_bits
+    };
+}
+
 static void
 encode_CT_ORIG_NW_DST(const struct ovnact_result *res,
                       const struct ovnact_encode_params *ep,
                       struct ofpbuf *ofpacts)
 {
+    bool protect_result_reg = encode_save_temp_reg(res, MFF_LOG_RESULT_REG, 0,
+                                                   32, ofpacts);
+
     encode_result_action___(res, ep->ct_nw_dst_load_table,
-                            MFF_LOG_CT_ORIG_NW_DST_ADDR, 0, 32, ofpacts);
+                            MFF_LOG_RESULT_REG, 0, 32, ofpacts);
+
+    if (protect_result_reg) {
+        encode_restore_temp_reg(MFF_LOG_RESULT_REG, 0, 32, ofpacts);
+    }
 }
 
 static void
@@ -5473,8 +5508,15 @@ encode_CT_ORIG_IP6_DST(const struct ovnact_result *res,
                        const struct ovnact_encode_params *ep,
                        struct ofpbuf *ofpacts)
 {
+    bool protect_reg = encode_save_temp_reg(res, MFF_LOG_RESULT_REG, 0, 128,
+                                            ofpacts);
+
     encode_result_action___(res, ep->ct_ip6_dst_load_table,
-                            MFF_LOG_CT_ORIG_IP6_DST_ADDR, 0, 128, ofpacts);
+                            MFF_LOG_RESULT_REG, 0, 128, ofpacts);
+
+    if (protect_reg) {
+        encode_restore_temp_reg(MFF_LOG_RESULT_REG, 0, 128, ofpacts);
+    }
 }
 
 static void
@@ -5493,11 +5535,18 @@ format_CT_ORIG_IP6_DST(const struct ovnact_result *res, struct ds *s)
 
 static void
 encode_CT_ORIG_TP_DST(const struct ovnact_result *res,
-                      const struct ovnact_encode_params *ep OVS_UNUSED,
+                      const struct ovnact_encode_params *ep,
                       struct ofpbuf *ofpacts)
 {
+    bool protect_reg = encode_save_temp_reg(res, MFF_LOG_RESULT_REG, 0, 16,
+                                            ofpacts);
+
     encode_result_action___(res, ep->ct_tp_dst_load_table,
-                            MFF_LOG_CT_ORIG_TP_DST_PORT, 0, 16, ofpacts);
+                            MFF_LOG_RESULT_REG, 0, 16, ofpacts);
+
+    if (protect_reg) {
+        encode_restore_temp_reg(MFF_LOG_RESULT_REG, 0, 16, ofpacts);
+    }
 }
 
 static void
@@ -5512,6 +5561,36 @@ format_CT_ORIG_TP_DST(const struct ovnact_result *res, struct ds *s)
 {
     expr_field_format(&res->dst, s);
     ds_put_cstr(s, " = ct_tp_dst();");
+}
+
+static void
+encode_CT_ORIG_PROTO(const struct ovnact_result *res,
+                     const struct ovnact_encode_params *ep,
+                     struct ofpbuf *ofpacts)
+{
+    bool protect_reg = encode_save_temp_reg(res, MFF_LOG_RESULT_REG, 0, 8,
+                                            ofpacts);
+
+    encode_result_action___(res, ep->ct_proto_load_table,
+                            MFF_LOG_RESULT_REG, 0, 8, ofpacts);
+
+    if (protect_reg) {
+        encode_restore_temp_reg(MFF_LOG_RESULT_REG, 0, 8, ofpacts);
+    }
+}
+
+static void
+parse_CT_ORIG_PROTO(struct action_context *ctx, const struct expr_field *dst,
+                    struct ovnact_result *res)
+{
+    parse_ovnact_result__(ctx, "ct_proto", NULL, dst, res, 8);
+}
+
+static void
+format_CT_ORIG_PROTO(const struct ovnact_result *res, struct ds *s)
+{
+    expr_field_format(&res->dst, s);
+    ds_put_cstr(s, " = ct_proto();");
 }
 
 static void
@@ -5728,6 +5807,10 @@ parse_set_action(struct action_context *ctx)
                    lexer_lookahead(ctx->lexer) == LEX_T_LPAREN) {
             parse_CT_ORIG_TP_DST(ctx, &lhs,
                                  ovnact_put_CT_ORIG_TP_DST(ctx->ovnacts));
+        } else if (!strcmp(ctx->lexer->token.s, "ct_proto") &&
+                   lexer_lookahead(ctx->lexer) == LEX_T_LPAREN) {
+            parse_CT_ORIG_PROTO(ctx, &lhs,
+                                ovnact_put_CT_ORIG_PROTO(ctx->ovnacts));
         } else if (!strcmp(ctx->lexer->token.s, "ct_state_save") &&
                   lexer_lookahead(ctx->lexer) == LEX_T_LPAREN) {
             parse_CT_STATE_SAVE(ctx, &lhs,

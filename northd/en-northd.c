@@ -78,6 +78,8 @@ northd_get_input_data(struct engine_node *node,
         EN_OVSDB_GET(engine_get_input("NB_mirror", node));
     input_data->nbrec_mirror_rule_table =
         EN_OVSDB_GET(engine_get_input("NB_mirror_rule", node));
+    input_data->nbrec_port_group_table =
+        EN_OVSDB_GET(engine_get_input("NB_port_group", node));
 
     input_data->sbrec_datapath_binding_table =
         EN_OVSDB_GET(engine_get_input("SB_datapath_binding", node));
@@ -116,6 +118,7 @@ northd_get_input_data(struct engine_node *node,
     input_data->svc_monitor_mac = global_config->svc_monitor_mac;
     input_data->svc_monitor_mac_ea = global_config->svc_monitor_mac_ea;
     input_data->features = &global_config->features;
+    input_data->vxlan_mode = global_config->vxlan_mode;
 }
 
 enum engine_node_state
@@ -132,8 +135,7 @@ en_northd_run(struct engine_node *node, void *data)
 
     COVERAGE_INC(northd_run);
     stopwatch_start(OVNNB_DB_RUN_STOPWATCH_NAME, time_msec());
-    ovnnb_db_run(&input_data, data, eng_ctx->ovnnb_idl_txn,
-                 eng_ctx->ovnsb_idl_txn);
+    ovnnb_db_run(&input_data, data, eng_ctx->ovnsb_idl_txn);
     stopwatch_stop(OVNNB_DB_RUN_STOPWATCH_NAME, time_msec());
     return EN_UPDATED;
 }
@@ -153,7 +155,8 @@ northd_nb_logical_switch_handler(struct engine_node *node,
         return EN_UNHANDLED;
     }
 
-    if (northd_has_tracked_data(&nd->trk_data)) {
+    bool ipam_update = northd_handle_ipam_changes(nd);
+    if (northd_has_tracked_data(&nd->trk_data) || ipam_update) {
         return EN_HANDLED_UPDATED;
     }
 
@@ -237,6 +240,28 @@ northd_global_config_handler(struct engine_node *node, void *data OVS_UNUSED)
 
     return EN_HANDLED_UNCHANGED;
 }
+
+enum engine_input_handler_result
+northd_nb_port_group_handler(struct engine_node *node, void *data)
+{
+    struct northd_data *nd = data;
+
+    struct northd_input input_data;
+    northd_get_input_data(node, &input_data);
+
+    /* This handler cares only about ACLs, the port group itself has separate
+     * node. */
+    if (!northd_handle_pgs_acl_changes(&input_data, nd)) {
+        return EN_UNHANDLED;
+    }
+
+    if (northd_has_tracked_data(&nd->trk_data)) {
+        return EN_HANDLED_UPDATED;
+    }
+
+    return EN_HANDLED_UNCHANGED;
+}
+
 
 enum engine_input_handler_result
 route_policies_northd_change_handler(struct engine_node *node,
@@ -397,14 +422,20 @@ en_bfd_sync_run(struct engine_node *node, void *data)
         EN_OVSDB_GET(engine_get_input("NB_bfd", node));
     struct bfd_sync_data *bfd_sync_data = data;
 
-    bfd_sync_destroy(data);
-    bfd_sync_init(data);
+    struct sset new_bfd_ports = SSET_INITIALIZER(&new_bfd_ports);
     bfd_table_sync(eng_ctx->ovnsb_idl_txn, nbrec_bfd_table,
                    &northd_data->lr_ports, &bfd_data->bfd_connections,
                    &route_policies_data->bfd_active_connections,
                    &routes_data->bfd_active_connections,
-                   &bfd_sync_data->bfd_ports);
-    return EN_UPDATED;
+                   &new_bfd_ports);
+
+    enum engine_node_state new_state =
+        sset_equals(&new_bfd_ports, &bfd_sync_data->bfd_ports)
+        ? EN_UNCHANGED : EN_UPDATED;
+
+    bfd_sync_swap(bfd_sync_data, &new_bfd_ports);
+    sset_destroy(&new_bfd_ports);
+    return new_state;
 }
 
 void

@@ -1621,12 +1621,8 @@ execute_pop(const struct ovnact_push_pop *p, struct ofpbuf *stack,
     const void *src = nx_stack_pop(stack, &src_bytes);
     if (src) {
         union mf_subvalue sv;
-        uint8_t dst_bytes = DIV_ROUND_UP(sf.n_bits, 8);
+        memset(&sv, 0, sizeof sv);
 
-        if (src_bytes < dst_bytes) {
-            memset(&sv.u8[sizeof sv - dst_bytes], 0,
-                   dst_bytes - src_bytes);
-        }
         memcpy(&sv.u8[sizeof sv - src_bytes], src, src_bytes);
         mf_write_subfield_flow(&sf, &sv, uflow);
         mf_format_subvalue(&sv, &s);
@@ -2445,6 +2441,24 @@ execute_dns_lookup(const struct ovnact_result *dl, struct flow *uflow,
                          "*** dns_lookup action not implemented");
 }
 
+/* Populate CT fields from the flow corresponding counterpart. */
+static void
+populate_ct_fields(struct flow *ct_flow, struct flow *original_flow)
+{
+    ct_flow->ct_nw_proto = original_flow->nw_proto;
+    /* L3 */
+    if (original_flow->dl_type == htons(ETH_TYPE_IP)) {
+        ct_flow->ct_nw_src = original_flow->nw_src;
+        ct_flow->ct_nw_dst = original_flow->nw_dst;
+    } else if (original_flow->dl_type == htons(ETH_TYPE_IPV6)) {
+        ct_flow->ct_ipv6_src = original_flow->ipv6_src;
+        ct_flow->ct_ipv6_dst = original_flow->ipv6_dst;
+    }
+    /* L4 */
+    ct_flow->ct_tp_src = original_flow->tp_src;
+    ct_flow->ct_tp_dst = original_flow->tp_dst;
+}
+
 static void
 execute_ct_next(const struct ovnact_ct_next *ct_next,
                 const struct ovntrace_datapath *dp, struct flow *uflow,
@@ -2466,6 +2480,8 @@ execute_ct_next(const struct ovnact_ct_next *ct_next,
     /* Trace the actions in the next table. */
     struct flow ct_flow = *uflow;
     ct_flow.ct_state = state;
+    populate_ct_fields(&ct_flow, uflow);
+
     trace__(dp, &ct_flow, ct_next->ltable, pipeline, &node->subs);
 
     /* Upon return, we will trace the actions following the ct action in the
@@ -2530,6 +2546,8 @@ execute_ct_nat(const struct ovnact_ct_nat *ct_nat,
         super, OVNTRACE_NODE_TRANSFORMATION, "%s", ds_cstr(&s));
     ds_destroy(&s);
 
+    populate_ct_fields(&ct_flow, uflow);
+
     /* Trace the actions in the next table. */
     trace__(dp, &ct_flow, ct_nat->ltable, pipeline, &node->subs);
 
@@ -2553,6 +2571,8 @@ ct_commit_to_zone__(const struct ovnact_ct_commit_to_zone *ct_nat,
 
     struct ovntrace_node *node = ovntrace_node_append(
         super, OVNTRACE_NODE_TRANSFORMATION, "%s", ds_cstr(action));
+
+    populate_ct_fields(&ct_flow, uflow);
 
     /* Trace the actions in the next table. */
     trace__(dp, &ct_flow, ct_nat->ltable, pipeline, &node->subs);
@@ -2657,6 +2677,9 @@ execute_ct_lb(const struct ovnact_ct_lb *ct_lb,
         ct_lb->ovnact.type == OVNACT_CT_LB_MARK ? "ct_lb_mark" : "ct_lb",
         ds_cstr_ro(&comment));
     ds_destroy(&comment);
+
+    populate_ct_fields(&ct_lb_flow, uflow);
+
     trace__(dp, &ct_lb_flow, ct_lb->ltable, pipeline, &node->subs);
 }
 
@@ -3150,6 +3173,40 @@ execute_ct_save_state(const struct ovnact_result *dl, struct flow *uflow,
 }
 
 static void
+execute_ct_orig_tp_dst(const struct ovnact_result *res, struct flow *uflow,
+                       struct ovs_list *super)
+{
+    /* For ovn-trace, we simulate ct_tp_dst() by returning the current
+     * packet's destination port. */
+    struct mf_subfield sf = expr_resolve_field(&res->dst);
+    union mf_subvalue sv = { .be16_int = uflow->tp_dst };
+    mf_write_subfield_flow(&sf, &sv, uflow);
+
+    struct ds s = DS_EMPTY_INITIALIZER;
+    expr_field_format(&res->dst, &s);
+    ovntrace_node_append(super, OVNTRACE_NODE_MODIFY, "%s = %"PRIu16,
+                         ds_cstr(&s), ntohs(uflow->tp_dst));
+    ds_destroy(&s);
+}
+
+static void
+execute_ct_orig_proto(const struct ovnact_result *res, struct flow *uflow,
+                      struct ovs_list *super)
+{
+    /* For ovn-trace, we simulate ct_proto() by returning the current
+     * packet's protocol. */
+    struct mf_subfield sf = expr_resolve_field(&res->dst);
+    union mf_subvalue sv = { .u8_val = uflow->nw_proto };
+    mf_write_subfield_flow(&sf, &sv, uflow);
+
+    struct ds s = DS_EMPTY_INITIALIZER;
+    expr_field_format(&res->dst, &s);
+    ovntrace_node_append(super, OVNTRACE_NODE_MODIFY, "%s = %"PRIu8,
+                         ds_cstr(&s), uflow->nw_proto);
+    ds_destroy(&s);
+}
+
+static void
 execute_mirror(const struct ovnact_mirror *mirror,
                const struct ovntrace_datapath *dp,
                struct flow *uflow, struct ovs_list *super)
@@ -3516,6 +3573,10 @@ trace_actions(const struct ovnact *ovnacts, size_t ovnacts_len,
         case OVNACT_CT_ORIG_IP6_DST:
             break;
         case OVNACT_CT_ORIG_TP_DST:
+            execute_ct_orig_tp_dst(ovnact_get_CT_ORIG_TP_DST(a), uflow, super);
+            break;
+        case OVNACT_CT_ORIG_PROTO:
+            execute_ct_orig_proto(ovnact_get_CT_ORIG_PROTO(a), uflow, super);
             break;
         case OVNACT_FLOOD_REMOTE:
             ovntrace_node_append(super, OVNTRACE_NODE_OUTPUT,

@@ -43,6 +43,7 @@
 #include "lflow-cache.h"
 #include "lflow-conj-ids.h"
 #include "lib/vswitch-idl.h"
+#include "lib/ovsdb-types.h"
 #include "local_data.h"
 #include "lport.h"
 #include "memory.h"
@@ -92,6 +93,7 @@
 #include "route.h"
 #include "route-exchange.h"
 #include "route-table-notify.h"
+#include "garp_rarp.h"
 
 VLOG_DEFINE_THIS_MODULE(main);
 
@@ -113,7 +115,6 @@ static unixctl_cb_func debug_dump_lflow_conj_ids;
 static unixctl_cb_func lflow_cache_flush_cmd;
 static unixctl_cb_func lflow_cache_show_stats_cmd;
 static unixctl_cb_func debug_delay_nb_cfg_report;
-static unixctl_cb_func debug_ignore_startup_delay;
 
 #define DEFAULT_BRIDGE_NAME "br-int"
 #define DEFAULT_DATAPATH "system"
@@ -218,7 +219,7 @@ static char *get_file_system_id(void)
 static unsigned int
 update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
                    const struct sbrec_chassis *chassis,
-                   const struct sset *local_ifaces,
+                   const struct simap *local_ifaces,
                    const struct shash *local_bindings,
                    struct hmap *local_datapaths,
                    bool monitor_all)
@@ -358,7 +359,9 @@ update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
         const char *name;
 
         ovs_assert(local_bindings);
-        SSET_FOR_EACH (name, local_ifaces) {
+        const struct simap_node *n;
+        SIMAP_FOR_EACH (n, local_ifaces) {
+            name = n->name;
             /* Skip the VIFs we bound already, we should have a local datapath
              * for those. */
             const struct sbrec_port_binding *local_pb
@@ -544,12 +547,13 @@ static void
 update_flow_table_prefixes(struct ovsdb_idl_txn *ovs_idl_txn,
                            const struct ovsrec_bridge *br_int)
 {
-    size_t max_prefixes = ovs_features_max_flow_table_prefixes_get();
+    const struct ovsdb_type *server_type;
     struct ds ds = DS_EMPTY_INITIALIZER;
     const char *prefixes[] = {
         "ip_src", "ip_dst", "ipv6_src", "ipv6_dst",
     };
     struct ovsrec_flow_table *ft;
+    size_t max_prefixes;
     size_t i;
 
     /* We must not attempt setting more prefixes than our IDL supports.
@@ -559,12 +563,14 @@ update_flow_table_prefixes(struct ovsdb_idl_txn *ovs_idl_txn,
         ARRAY_SIZE(prefixes) <=
         ovsrec_flow_table_columns[OVSREC_FLOW_TABLE_COL_PREFIXES].type.n_max);
 
-    if (!max_prefixes) {
-        /* Not discovered yet. */
+    server_type = ovsrec_flow_table_prefixes_server_type(
+                                ovsdb_idl_txn_get_idl(ovs_idl_txn));
+    if (!server_type) {
+        /* Not connected or not in the server's schema somehow. */
         return;
     }
 
-    max_prefixes = MIN(max_prefixes, ARRAY_SIZE(prefixes));
+    max_prefixes = MIN(server_type->n_max, ARRAY_SIZE(prefixes));
     if (br_int->n_flow_tables == N_FLOW_TABLES &&
         br_int->value_flow_tables[0]->n_prefixes == max_prefixes) {
         /* Already up to date.  Ideally, we would check every table,
@@ -1298,8 +1304,9 @@ struct ed_type_runtime_data {
      * hypervisor.  These logical ports include the VIFs (and their child
      * logical ports, if any) that belong to VMs running on the hypervisor,
      * l2gateway ports for which options:l2gateway-chassis designates the
-     * local hypervisor, and localnet ports. */
-    struct sset local_lports;
+     * local hypervisor, and localnet ports.
+     * The value is mapped to enum binding_local_lport_status. */
+    struct simap local_lports;
 
     /* Port bindings that are relevant to the local chassis (VIFs bound
      * localy, patch ports).
@@ -1403,7 +1410,7 @@ en_runtime_data_init(struct engine_node *node OVS_UNUSED,
     struct ed_type_runtime_data *data = xzalloc(sizeof *data);
 
     hmap_init(&data->local_datapaths);
-    sset_init(&data->local_lports);
+    simap_init(&data->local_lports);
     related_lports_init(&data->related_lports);
     sset_init(&data->active_tunnels);
     hmap_init(&data->qos_map);
@@ -1423,7 +1430,7 @@ en_runtime_data_cleanup(void *data)
 {
     struct ed_type_runtime_data *rt_data = data;
 
-    sset_destroy(&rt_data->local_lports);
+    simap_destroy(&rt_data->local_lports);
     related_lports_destroy(&rt_data->related_lports);
     sset_destroy(&rt_data->active_tunnels);
     destroy_qos_map(&rt_data->qos_map);
@@ -1537,7 +1544,7 @@ en_runtime_data_run(struct engine_node *node, void *data)
     struct hmap *local_datapaths = &rt_data->local_datapaths;
     struct shash *local_active_ipv6_pd = &rt_data->local_active_ports_ipv6_pd;
     struct shash *local_active_ras = &rt_data->local_active_ports_ras;
-    struct sset *local_lports = &rt_data->local_lports;
+    struct simap *local_lports = &rt_data->local_lports;
     struct sset *active_tunnels = &rt_data->active_tunnels;
 
     static bool first_run = true;
@@ -1549,13 +1556,13 @@ en_runtime_data_run(struct engine_node *node, void *data)
         shash_clear(local_active_ipv6_pd);
         shash_clear(local_active_ras);
         local_binding_data_destroy(&rt_data->lbinding_data);
-        sset_destroy(local_lports);
+        simap_destroy(local_lports);
         related_lports_destroy(&rt_data->related_lports);
         sset_destroy(active_tunnels);
         destroy_qos_map(&rt_data->qos_map);
         smap_destroy(&rt_data->local_iface_ids);
         hmap_init(local_datapaths);
-        sset_init(local_lports);
+        simap_init(local_lports);
         related_lports_init(&rt_data->related_lports);
         sset_init(active_tunnels);
         hmap_init(&rt_data->qos_map);
@@ -1645,15 +1652,12 @@ runtime_data_sb_ro_handler(struct engine_node *node, void *data)
     }
     if (chassis) {
         struct ed_type_runtime_data *rt_data = data;
-        bool sb_readonly = !engine_get_context()->ovnsb_idl_txn;
         struct controller_engine_ctx *ctrl_ctx =
             engine_get_context()->client_ctx;
 
-        if (if_status_handle_claims(ctrl_ctx->if_mgr,
-                                    &rt_data->lbinding_data,
-                                    chassis,
-                                    &rt_data->tracked_dp_bindings,
-                                    pb_table, sb_readonly)) {
+        if (if_status_handle_claims(ctrl_ctx->if_mgr, &rt_data->lbinding_data,
+                                    chassis, &rt_data->tracked_dp_bindings,
+                                    pb_table)) {
             result = EN_HANDLED_UPDATED;
             rt_data->tracked = true;
         }
@@ -4973,6 +4977,13 @@ controller_output_route_exchange_handler(struct engine_node *node OVS_UNUSED,
     return EN_HANDLED_UPDATED;
 }
 
+static enum engine_input_handler_result
+controller_output_garp_rarp_handler(struct engine_node *node OVS_UNUSED,
+                                    void *data OVS_UNUSED)
+{
+    return EN_HANDLED_UPDATED;
+}
+
 /* Handles sbrec_chassis changes.
  * If a new chassis is added or removed return false, so that
  * flows are recomputed.  For any updates, there is no need for
@@ -5052,7 +5063,6 @@ en_route_run(struct engine_node *node, void *data)
         .sbrec_port_binding_by_name = sbrec_port_binding_by_name,
         .chassis = chassis,
         .dynamic_routing_port_mapping = dynamic_routing_port_mapping,
-        .active_tunnels = &rt_data->active_tunnels,
         .local_datapaths = &rt_data->local_datapaths,
         .local_bindings = &rt_data->lbinding_data.bindings,
     };
@@ -5154,7 +5164,6 @@ route_runtime_data_handler(struct engine_node *node, void *data)
             struct tracked_lport *lport = shash_node->data;
 
             if (route_exchange_find_port(sbrec_port_binding_by_name, chassis,
-                                         &rt_data->active_tunnels,
                                          lport->pb)) {
                 /* XXX: Until we get I-P support for route exchange we need to
                  * request recompute. */
@@ -5212,8 +5221,6 @@ route_sb_port_binding_data_handler(struct engine_node *node, void *data)
         engine_ovsdb_node_get_index(
                 engine_get_input("SB_port_binding", node),
                 "name");
-    struct ed_type_runtime_data *rt_data =
-        engine_get_input_data("runtime_data", node);
 
 
     /* There are the following cases where we need to handle updates to the
@@ -5236,8 +5243,8 @@ route_sb_port_binding_data_handler(struct engine_node *node, void *data)
             return EN_UNHANDLED;
         }
 
-        if (route_exchange_find_port(sbrec_port_binding_by_name, chassis,
-                                     &rt_data->active_tunnels, sbrec_pb)) {
+        if (route_exchange_find_port(sbrec_port_binding_by_name,
+                                     chassis, sbrec_pb)) {
             /* XXX: Until we get I-P support for route exchange we need to
              * request recompute. */
             return EN_UNHANDLED;
@@ -5260,9 +5267,9 @@ route_sb_advertised_route_data_handler(struct engine_node *node, void *data)
      *    datapath locally.
      *
      * Updates to advertised_route can generally be ignored as northd will not
-     * update these entries. We also get update notifications if a referenced
-     * port_binding is updated, but these are handled in the runtime_data
-     * handler. */
+     * update these entries. For exceptions see below.
+     * We also get update notifications if a referenced port_binding is
+     * updated, but these are handled in the runtime_data handler. */
     const struct sbrec_advertised_route *sbrec_route;
     SBREC_ADVERTISED_ROUTE_TABLE_FOR_EACH_TRACKED (sbrec_route,
                                                    advertised_route_table) {
@@ -5279,6 +5286,20 @@ route_sb_advertised_route_data_handler(struct engine_node *node, void *data)
              * request recompute. */
             return EN_UNHANDLED;
         }
+
+        if (sbrec_route->tracked_port) {
+            const char *name = sbrec_route->tracked_port->logical_port;
+            if (!(sset_contains(&re_data->tracked_ports_local, name) ||
+                 sset_contains(&re_data->tracked_ports_remote, name))) {
+                /* Advertised_Routes are generally not changed by northd.
+                 * However if we did not monitor for the Port_Binding
+                 * referenced by tracked_port previously then it would have
+                 * been NULL. If we notice that we have now loaded the
+                 * Port_Binding we need to recompute to correctly update
+                 * the route priority. */
+                return EN_UNHANDLED;
+            }
+        }
     }
     return EN_HANDLED_UNCHANGED;
 }
@@ -5286,6 +5307,9 @@ route_sb_advertised_route_data_handler(struct engine_node *node, void *data)
 struct ed_type_route_exchange {
     /* We need the idl to check if the Learned_Route table exists. */
     struct ovsdb_idl *sb_idl;
+    /* Set to true when SB is readonly and we have routes that need
+     * to be inserted into SB. */
+    bool sb_changes_pending;
 };
 
 static enum engine_node_state
@@ -5319,7 +5343,9 @@ en_route_exchange_run(struct engine_node *node, void *data)
         .sbrec_port_binding_by_name = sbrec_port_binding_by_name,
         .announce_routes = &route_data->announce_routes,
     };
-    struct route_exchange_ctx_out r_ctx_out = {};
+    struct route_exchange_ctx_out r_ctx_out = {
+        .sb_changes_pending = false,
+    };
 
     hmap_init(&r_ctx_out.route_table_watches);
 
@@ -5329,7 +5355,20 @@ en_route_exchange_run(struct engine_node *node, void *data)
     route_table_watch_request_cleanup(&r_ctx_out.route_table_watches);
     hmap_destroy(&r_ctx_out.route_table_watches);
 
+    re->sb_changes_pending = r_ctx_out.sb_changes_pending;
+
     return EN_UPDATED;
+}
+
+static enum engine_input_handler_result
+route_exchange_sb_ro_handler(struct engine_node *node OVS_UNUSED, void *data)
+{
+    struct ed_type_route_exchange *re = data;
+    if (re->sb_changes_pending) {
+        return EN_UNHANDLED;
+    }
+
+    return EN_HANDLED_UNCHANGED;
 }
 
 
@@ -5381,6 +5420,241 @@ en_route_table_notify_init(struct engine_node *node OVS_UNUSED,
 static void
 en_route_table_notify_cleanup(void *data OVS_UNUSED)
 {
+}
+
+struct ed_type_route_exchange_status {
+    bool netlink_trigger_run;
+};
+
+static void *
+en_route_exchange_status_init(struct engine_node *node OVS_UNUSED,
+                              struct engine_arg *arg OVS_UNUSED)
+{
+    return xzalloc(sizeof(struct ed_type_route_exchange_status));
+}
+
+static enum engine_node_state
+en_route_exchange_status_run(struct engine_node *node OVS_UNUSED, void *data)
+{
+    struct ed_type_route_exchange_status *res = data;
+    enum engine_node_state state;
+
+    if (res->netlink_trigger_run) {
+        state = EN_UPDATED;
+        poll_immediate_wake();
+    } else {
+        state = EN_UNCHANGED;
+    }
+    res->netlink_trigger_run = false;
+
+    return state;
+}
+
+static void
+en_route_exchange_status_cleanup(void *data OVS_UNUSED)
+{
+}
+
+static enum engine_node_state
+en_garp_rarp_run(struct engine_node *node, void *data_)
+{
+    struct ed_type_garp_rarp *data = data_;
+    struct controller_engine_ctx *ctrl_ctx =
+        engine_get_context()->client_ctx;
+
+    const struct ovsrec_open_vswitch_table *ovs_table =
+        EN_OVSDB_GET(engine_get_input("OVS_open_vswitch", node));
+    const char *chassis_id = get_ovs_chassis_id(ovs_table);
+    ovs_assert(chassis_id);
+
+    struct ovsdb_idl_index *sbrec_chassis_by_name =
+        engine_ovsdb_node_get_index(
+                engine_get_input("SB_chassis", node),
+                "name");
+    const struct sbrec_chassis *chassis
+        = chassis_lookup_by_name(sbrec_chassis_by_name, chassis_id);
+    ovs_assert(chassis);
+
+    const struct ovsrec_open_vswitch *cfg
+        = ovsrec_open_vswitch_table_first(ovs_table);
+
+    struct ovsdb_idl_index *sbrec_port_binding_by_datapath =
+        engine_ovsdb_node_get_index(
+                engine_get_input("SB_port_binding", node),
+                "datapath");
+    struct ovsdb_idl_index *sbrec_port_binding_by_name =
+        engine_ovsdb_node_get_index(
+                engine_get_input("SB_port_binding", node),
+                "name");
+    struct ovsdb_idl_index *sbrec_mac_binding_by_lport_ip =
+        engine_ovsdb_node_get_index(
+                engine_get_input("SB_mac_binding", node),
+                "lport_ip");
+
+    struct ovsdb_idl_txn *ovnsb_idl_txn = engine_get_context()->ovnsb_idl_txn;
+
+    const struct sbrec_ecmp_nexthop_table *ecmp_nh_table =
+        sbrec_ecmp_nexthop_table_get(ovsdb_idl_txn_get_idl(ovnsb_idl_txn));
+
+    struct ed_type_runtime_data *rt_data =
+        engine_get_input_data("runtime_data", node);
+
+    struct garp_rarp_ctx_in r_ctx_in = {
+        .ovnsb_idl_txn = ovnsb_idl_txn,
+        .cfg = cfg,
+        .sbrec_port_binding_by_datapath = sbrec_port_binding_by_datapath,
+        .sbrec_port_binding_by_name = sbrec_port_binding_by_name,
+        .sbrec_mac_binding_by_lport_ip = sbrec_mac_binding_by_lport_ip,
+        .ecmp_nh_table = ecmp_nh_table,
+        .chassis = chassis,
+        .active_tunnels = &rt_data->active_tunnels,
+        .local_datapaths = &rt_data->local_datapaths,
+        .data = data,
+        .mgr = ctrl_ctx->if_mgr,
+    };
+
+    garp_rarp_run(&r_ctx_in);
+    return EN_UPDATED;
+}
+
+
+static void *
+en_garp_rarp_init(struct engine_node *node OVS_UNUSED,
+                  struct engine_arg *arg OVS_UNUSED)
+{
+    return garp_rarp_init();
+}
+
+static void
+en_garp_rarp_cleanup(void *data)
+{
+    garp_rarp_cleanup(data);
+}
+
+static enum engine_input_handler_result
+garp_rarp_sb_port_binding_handler(struct engine_node *node,
+                                  void *data_)
+{
+    /* We need to handle a change if there was change on a datapath with
+     * a localnet port.
+     * Also the ha_chassis status of a port binding might change. */
+    struct ed_type_garp_rarp *data = data_;
+
+    const struct ovsrec_open_vswitch_table *ovs_table =
+        EN_OVSDB_GET(engine_get_input("OVS_open_vswitch", node));
+    const char *chassis_id = get_ovs_chassis_id(ovs_table);
+    ovs_assert(chassis_id);
+
+    struct ovsdb_idl_index *sbrec_chassis_by_name =
+        engine_ovsdb_node_get_index(
+                engine_get_input("SB_chassis", node),
+                "name");
+    const struct sbrec_chassis *chassis
+        = chassis_lookup_by_name(sbrec_chassis_by_name, chassis_id);
+    ovs_assert(chassis);
+
+    struct ed_type_runtime_data *rt_data =
+            engine_get_input_data("runtime_data", node);
+    const struct sbrec_port_binding_table *port_binding_table =
+        EN_OVSDB_GET(engine_get_input("SB_port_binding", node));
+    struct ovsdb_idl_index *sbrec_port_binding_by_name =
+        engine_ovsdb_node_get_index(
+                engine_get_input("SB_port_binding", node),
+                "name");
+    struct controller_engine_ctx *ctrl_ctx = engine_get_context()->client_ctx;
+
+    const struct sbrec_port_binding *pb;
+    SBREC_PORT_BINDING_TABLE_FOR_EACH_TRACKED (pb, port_binding_table) {
+        struct local_datapath *ld = get_local_datapath(
+            &rt_data->local_datapaths, pb->datapath->tunnel_key);
+
+        if (!ld) {
+            continue;
+        }
+
+        if (ld->localnet_port) {
+            /* XXX: actually handle this incrementally. */
+            return EN_UNHANDLED;
+        }
+
+        if (sset_contains(&data->non_local_lports, pb->logical_port) &&
+            lport_is_chassis_resident(sbrec_port_binding_by_name, chassis,
+                                      pb->logical_port)) {
+            /* XXX: actually handle this incrementally. */
+            return EN_UNHANDLED;
+        }
+
+        if (sset_contains(&data->local_lports, pb->logical_port) &&
+            !lport_is_chassis_resident(sbrec_port_binding_by_name, chassis,
+                                       pb->logical_port)) {
+            /* XXX: actually handle this incrementally. */
+            return EN_UNHANDLED;
+        }
+
+        /* If the cr_port was updated, bound to a different chassis in idl
+         * and (re)bound to our chassis in runtime data, make sure to reset
+         * garp timers*/
+        if (sbrec_port_binding_is_updated(pb,
+                                          SBREC_PORT_BINDING_COL_CHASSIS) &&
+            if_status_reclaimed(ctrl_ctx->if_mgr, pb->logical_port)) {
+            garp_rarp_node_reset_timers(pb->logical_port);
+        }
+    }
+
+    return EN_HANDLED_UNCHANGED;
+}
+
+static enum engine_input_handler_result
+garp_rarp_runtime_data_handler(struct engine_node *node, void *data OVS_UNUSED)
+{
+    /* We use two elements from rt_data:
+     * 1. active_tunnels: There is currently not incremental processing for
+     *    this in runtime_data. So we just fall back to a recompute.
+     * 2. local_datapaths: This has incremental processing on the runtime_data
+     *    side. We are only interested in datapaths with a localnet port so
+     *    we just recompute if there is one in there. Otherwise the change is
+     *    irrelevant for us. */
+
+    struct ed_type_runtime_data *rt_data =
+            engine_get_input_data("runtime_data", node);
+
+    /* There are no tracked data. Fall back to full recompute. */
+    if (!rt_data->tracked) {
+        return EN_UNHANDLED;
+    }
+
+    struct tracked_datapath *tdp;
+    HMAP_FOR_EACH (tdp, node, &rt_data->tracked_dp_bindings) {
+        if (tdp->tracked_type == TRACKED_RESOURCE_REMOVED) {
+            /* This is currently not handled incrementally in runtime_data
+             * so it should never happen. Recompute just in case. */
+            return EN_UNHANDLED;
+        }
+
+        struct local_datapath *ld = get_local_datapath(
+            &rt_data->local_datapaths, tdp->dp->tunnel_key);
+
+        if (!ld) {
+            continue;
+        }
+
+        if (ld->localnet_port) {
+            /* XXX: actually handle this incrementally. */
+            return EN_UNHANDLED;
+        }
+
+        /* The localnet port might also have been removed. */
+        struct tracked_lport *tlp;
+        struct shash_node *sn;
+        SHASH_FOR_EACH (sn, &tdp->lports) {
+            tlp = sn->data;
+            if (!strcmp(tlp->pb->type, "localnet")) {
+                return EN_UNHANDLED;
+            }
+        }
+    }
+
+    return EN_HANDLED_UNCHANGED;
 }
 
 /* Returns false if the northd internal version stored in SB_Global
@@ -5690,6 +5964,8 @@ main(int argc, char *argv[])
     ENGINE_NODE(route);
     ENGINE_NODE(route_table_notify);
     ENGINE_NODE(route_exchange);
+    ENGINE_NODE(route_exchange_status);
+    ENGINE_NODE(garp_rarp);
 
 #define SB_NODE(NAME) ENGINE_NODE_SB(NAME);
     SB_NODES
@@ -5727,6 +6003,9 @@ main(int argc, char *argv[])
     engine_add_input(&en_route_exchange, &en_sb_port_binding,
                      engine_noop_handler);
     engine_add_input(&en_route_exchange, &en_route_table_notify, NULL);
+    engine_add_input(&en_route_exchange, &en_route_exchange_status, NULL);
+    engine_add_input(&en_route_exchange, &en_sb_ro,
+                     route_exchange_sb_ro_handler);
 
     engine_add_input(&en_addr_sets, &en_sb_address_set,
                      addr_sets_sb_address_set_handler);
@@ -5902,6 +6181,16 @@ main(int argc, char *argv[])
     engine_add_input(&en_dns_cache, &en_sb_dns,
                      dns_cache_sb_dns_handler);
 
+    engine_add_input(&en_garp_rarp, &en_ovs_open_vswitch, NULL);
+    engine_add_input(&en_garp_rarp, &en_sb_chassis, NULL);
+    engine_add_input(&en_garp_rarp, &en_sb_port_binding,
+                     garp_rarp_sb_port_binding_handler);
+    /* The mac_binding data is just used in an index to filter duplicates when
+     * inserting data to the southbound. */
+    engine_add_input(&en_garp_rarp, &en_sb_mac_binding, engine_noop_handler);
+    engine_add_input(&en_garp_rarp, &en_runtime_data,
+                     garp_rarp_runtime_data_handler);
+
     engine_add_input(&en_controller_output, &en_dns_cache,
                      NULL);
     engine_add_input(&en_controller_output, &en_lflow_output,
@@ -5914,6 +6203,8 @@ main(int argc, char *argv[])
                      controller_output_bfd_chassis_handler);
     engine_add_input(&en_controller_output, &en_route_exchange,
                      controller_output_route_exchange_handler);
+    engine_add_input(&en_controller_output, &en_garp_rarp,
+                     controller_output_garp_rarp_handler);
 
     engine_add_input(&en_acl_id, &en_sb_acl_id, NULL);
     engine_add_input(&en_controller_output, &en_acl_id,
@@ -5950,6 +6241,8 @@ main(int argc, char *argv[])
                                 sbrec_chassis_template_var_index_by_chassis);
     engine_ovsdb_node_add_index(&en_sb_learned_route, "datapath",
                                 sbrec_learned_route_index_by_datapath);
+    engine_ovsdb_node_add_index(&en_sb_mac_binding, "lport_ip",
+                                sbrec_mac_binding_by_lport_ip);
     engine_ovsdb_node_add_index(&en_ovs_flow_sample_collector_set, "id",
                                 ovsrec_flow_sample_collector_set_by_id);
     engine_ovsdb_node_add_index(&en_ovs_port, "qos", ovsrec_port_by_qos);
@@ -6052,9 +6345,6 @@ main(int argc, char *argv[])
     unixctl_command_register("debug/dump-mac-bindings", "", 0, 0,
                              debug_dump_local_mac_bindings,
                              &mac_cache_data->mac_bindings);
-
-    unixctl_command_register("debug/ignore-startup-delay", "", 0, 0,
-                             debug_ignore_startup_delay, NULL);
     ovn_debug_commands_register();
 
     unsigned int ovs_cond_seqno = UINT_MAX;
@@ -6132,6 +6422,16 @@ main(int argc, char *argv[])
                 engine_set_force_recompute();
             }
             ovnsb_cond_seqno = new_ovnsb_cond_seqno;
+        }
+
+        /* Check if we have received all initial dumps of the southbound
+         * based on the monitor condtions we set.
+         * If we have sb_monitor_all that means we have all data that we would
+         * ever need.
+         * In other cases we depend on engine runs. This is handled below. */
+        if (ovnsb_cond_seqno == ovnsb_expected_cond_seqno
+            && ovnsb_expected_cond_seqno != UINT_MAX && sb_monitor_all) {
+            daemon_started_recently_ignore();
         }
 
         struct engine_context eng_ctx = {
@@ -6216,8 +6516,7 @@ main(int argc, char *argv[])
                 && ovs_feature_support_run(br_int_dp ?
                                            &br_int_dp->capabilities : NULL,
                                            br_int_remote.target,
-                                           br_int_remote.probe_interval,
-                                           ovs_remote)) {
+                                           br_int_remote.probe_interval)) {
                 VLOG_INFO("OVS feature set changed, force recompute.");
                 engine_set_force_recompute();
 
@@ -6258,6 +6557,10 @@ main(int argc, char *argv[])
                         engine_get_internal_data(&en_route_table_notify);
                     rtn->changed = route_table_notify_run();
 
+                    struct ed_type_route_exchange_status *res =
+                        engine_get_internal_data(&en_route_exchange_status);
+                    res->netlink_trigger_run = !!route_exchange_status_run();
+
                     stopwatch_start(CONTROLLER_LOOP_STOPWATCH_NAME,
                                     time_msec());
 
@@ -6291,9 +6594,6 @@ main(int argc, char *argv[])
 
                     stopwatch_stop(CONTROLLER_LOOP_STOPWATCH_NAME,
                                    time_msec());
-                    if (engine_has_updated()) {
-                        daemon_started_recently_countdown();
-                    }
 
                     ct_zones_data = engine_get_data(&en_ct_zones);
                     bfd_chassis_data = engine_get_data(&en_bfd_chassis);
@@ -6368,7 +6668,6 @@ main(int argc, char *argv[])
                         pinctrl_update(ovnsb_idl_loop.idl);
                         pinctrl_run(ovnsb_idl_txn,
                                     sbrec_datapath_binding_by_key,
-                                    sbrec_port_binding_by_datapath,
                                     sbrec_port_binding_by_key,
                                     sbrec_port_binding_by_name,
                                     sbrec_mac_binding_by_lport_ip,
@@ -6384,9 +6683,8 @@ main(int argc, char *argv[])
                                     sbrec_bfd_table_get(ovnsb_idl_loop.idl),
                                     sbrec_ecmp_nexthop_table_get(
                                         ovnsb_idl_loop.idl),
-                                    br_int, chassis,
+                                    chassis,
                                     &runtime_data->local_datapaths,
-                                    &runtime_data->active_tunnels,
                                     &runtime_data->local_active_ports_ipv6_pd,
                                     &runtime_data->local_active_ports_ras,
                                     ovsrec_open_vswitch_table_get(
@@ -6403,6 +6701,8 @@ main(int argc, char *argv[])
                          * logical datapath goups changed. */
                         if (engine_node_changed(&en_runtime_data)
                             || engine_node_changed(&en_sb_logical_dp_group)) {
+                            bool had_all_data = ovnsb_cond_seqno ==
+                                                ovnsb_expected_cond_seqno;
                             ovnsb_expected_cond_seqno =
                                 update_sb_monitors(
                                     ovnsb_idl_loop.idl, chassis,
@@ -6410,6 +6710,27 @@ main(int argc, char *argv[])
                                     &runtime_data->lbinding_data.bindings,
                                     &runtime_data->local_datapaths,
                                     sb_monitor_all);
+                            bool condition_changed = ovnsb_cond_seqno !=
+                                                     ovnsb_expected_cond_seqno;
+                            if (had_all_data && condition_changed) {
+                                /* We limit the amount of condition updates
+                                 * that we treat as daemon_started_recently.
+                                 * This allows us to proceed even if there is
+                                 * a continuous reason for monitor updates. */
+                                daemon_started_recently_countdown();
+                            }
+                        }
+                        /* If there is no new expected seqno we have finished
+                         * loading all needed data from southbound. We then
+                         * need to run one more time since we might behave
+                         * differently. */
+                        if (daemon_started_recently()) {
+                            bool condition_changed = ovnsb_cond_seqno !=
+                                                     ovnsb_expected_cond_seqno;
+                            if (!condition_changed) {
+                                daemon_started_recently_ignore();
+                                poll_immediate_wake();
+                            }
                         }
                         if (ovs_idl_txn) {
                             update_qos(sbrec_port_binding_by_name, ovs_idl_txn,
@@ -6467,7 +6788,8 @@ main(int argc, char *argv[])
                                    ofctrl_seqno_get_req_cfg(),
                                    engine_node_changed(&en_lflow_output),
                                    engine_node_changed(&en_pflow_output),
-                                   tracked_acl_ids);
+                                   tracked_acl_ids,
+                                   !daemon_started_recently());
                         stopwatch_stop(OFCTRL_PUT_STOPWATCH_NAME, time_msec());
                     }
                     stopwatch_start(OFCTRL_SEQNO_RUN_STOPWATCH_NAME,
@@ -6614,9 +6936,6 @@ loop_done:
         }
     }
 
-    engine_set_context(NULL);
-    engine_cleanup();
-
     const struct ovsrec_open_vswitch_table *ovs_table =
         ovsrec_open_vswitch_table_get(ovs_idl_loop.idl);
     bool restart = exit_args.restart || !get_ovn_cleanup_on_exit(ovs_table);
@@ -6690,16 +7009,22 @@ loop_done:
         route_exchange_cleanup_vrfs();
     }
 
+    /* The engine cleanup should happen only after threads have been
+     * destroyed and joined in case they are accessing engine data. */
+    pinctrl_destroy();
+    statctrl_destroy();
+
+    engine_set_context(NULL);
+    engine_cleanup();
+
     free(ovn_version);
     lflow_destroy();
     ofctrl_destroy();
     ofctrl_seqno_destroy();
-    pinctrl_destroy();
     binding_destroy();
     patch_destroy();
     mirror_destroy();
     encaps_destroy();
-    statctrl_destroy();
     if_status_mgr_destroy(if_mgr);
     shash_destroy(&vif_plug_deleted_iface_ids);
     shash_destroy(&vif_plug_changed_iface_ids);
@@ -7091,12 +7416,4 @@ debug_dump_local_mac_bindings(struct unixctl_conn *conn, int argc OVS_UNUSED,
     mac_bindings_to_string(mac_bindings, &mb_str);
     unixctl_command_reply(conn, ds_cstr(&mb_str));
     ds_destroy(&mb_str);
-}
-
-static void
-debug_ignore_startup_delay(struct unixctl_conn *conn, int argc OVS_UNUSED,
-                           const char *argv[] OVS_UNUSED, void *arg OVS_UNUSED)
-{
-    daemon_started_recently_ignore();
-    unixctl_command_reply(conn, NULL);
 }
